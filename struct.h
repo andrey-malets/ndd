@@ -3,11 +3,16 @@
 #include "macro.h"
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <sys/types.h>
 
 struct producer_ops {
-  METHOD0(int, get_fd);
   METHOD0(bool, init);
   METHOD0(void, destroy);
+
+  METHOD0(int, get_fd);
+  METHOD(ssize_t, produce, void *buf, size_t count);
+  METHOD0(bool, signal);
 };
 
 struct producer {
@@ -15,9 +20,12 @@ struct producer {
 };
 
 struct consumer_ops {
-  METHOD0(int, get_fd);
   METHOD0(bool, init);
   METHOD0(void, destroy);
+
+  METHOD0(int, get_fd);
+  METHOD(ssize_t, consume, void *buf, size_t count);
+  METHOD0(bool, signal);
 };
 
 struct consumer {
