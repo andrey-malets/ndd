@@ -7,5 +7,5 @@
   ops_type *ops; \
   void *data
 
-#define CALL0(object, method) object.ops->method(&object)
-#define CALL(object, method, ...) object.ops->method(&object, __VA_ARGS__)
+#define CALL0(object, method) object.ops->method(object.data)
+#define CALL(object, method, ...) object.ops->method(object.data, __VA_ARGS__)
