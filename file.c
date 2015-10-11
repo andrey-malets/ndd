@@ -43,6 +43,8 @@ void file_destroy(void *data) {
     }
     this->fd = -1;
   }
+
+  free(this);
 }
 
 static const struct producer_ops input_ops = {
