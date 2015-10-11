@@ -1,27 +1,28 @@
 #pragma once
 
+#include "macro.h"
+
 #include <stdbool.h>
 
-struct producer;
 struct producer_ops {
-  int (*get_fd)();
-  bool (*init)(struct producer *);
-  void (*destroy)(struct producer *);
+  METHOD0(int, get_fd);
+  METHOD0(bool, init);
+  METHOD0(void, destroy);
 };
 
 struct producer {
-  struct producer_ops *ops;
-  void *data;
+  OBJECT(struct producer_ops);
 };
 
-struct consumer;
 struct consumer_ops {
-  int (*get_fd)(struct consumer *);
-  bool (*init)(struct consumer *);
-  void (*destroy)(struct consumer *);
+  METHOD0(int, get_fd);
+  METHOD0(bool, init);
+  METHOD0(void, destroy);
 };
 
 struct consumer {
-  struct consumer_ops *ops;
-  void *data;
+  OBJECT(struct consumer_ops);
 };
+
+bool is_empty_producer(struct producer *producer);
+bool is_empty_consumer(struct consumer *consumer);

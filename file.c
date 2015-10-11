@@ -3,10 +3,10 @@
 
 #include <stdlib.h>
 
-struct producer *get_file_reader(const char *filename) {
-  return malloc(sizeof(struct producer));
+struct producer get_file_reader(const char *filename) {
+  return (struct producer) {0, 0};
 }
 
-struct consumer *get_file_writer(const char *filename) {
-  return malloc(sizeof(struct producer));
+struct consumer get_file_writer(const char *filename) {
+  return (struct consumer) {0, 0};
 }

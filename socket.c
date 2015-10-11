@@ -3,10 +3,10 @@
 
 #include <stdlib.h>
 
-struct producer *get_socket_reader(const char *spec) {
-  return malloc(sizeof(struct consumer));
+struct producer get_socket_reader(const char *spec) {
+  return (struct producer) {0, 0};
 }
 
-struct consumer *get_socket_writer(const char *spec) {
-  return malloc(sizeof(struct consumer));
+struct consumer get_socket_writer(const char *spec) {
+  return (struct consumer) {0, 0};
 }

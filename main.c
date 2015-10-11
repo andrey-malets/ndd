@@ -2,6 +2,9 @@
 #include "socket.h"
 #include "struct.h"
 
+#include <assert.h>
+#include <errno.h>
+#include <limits.h>
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,44 +36,56 @@
 #define CHECK_OR_GOTO(label, rv, val, cond) \
   CHECK_OR_GOTO_WITH_MSG(label, rv, val, NULL, cond)
 
-int init_producer(struct producer **producer,
-                  struct producer *(*fn)(const char*),
+int init_producer(struct producer *producer,
+                  struct producer (*fn)(const char*),
                   const char *arg) {
-  CHECK_OR_RETURN(0, *producer == 0, "there can only be one producer");
+  CHECK_OR_RETURN(0, is_empty_producer(producer),
+                  "there can only be one producer");
 
   *producer = fn(arg);
-  CHECK_OR_RETURN(0, *producer, "failed to construct producer");
+  CHECK_OR_RETURN(0, !is_empty_producer(producer),
+                  "failed to construct producer");
 
   return 1;
 }
 
-int add_consumer(struct consumer **consumers,
+int add_consumer(struct consumer *consumers,
                  size_t *num_consumers,
-                 struct consumer *(*fn)(const char*),
+                 struct consumer (*fn)(const char*),
                  const char *arg) {
   CHECK_OR_RETURN(0, *num_consumers != MAX_CONSUMERS, "too many consumers");
 
   consumers[(*num_consumers)++] = fn(arg);
-  CHECK_OR_RETURN(0, consumers[*num_consumers-1],
+  CHECK_OR_RETURN(0, !is_empty_consumer(&consumers[*num_consumers-1]),
                   "failed to construct consumer");
   return 1;
+}
+
+bool strtoll_overflew(long long value) {
+  return (value == LLONG_MIN || value == LLONG_MAX) && errno == ERANGE;
 }
 
 int main(int argc, char *argv[]) {
   int rv = 0;
 
-  struct producer *producer = NULL;
-  struct consumer *consumers[MAX_CONSUMERS] = {0};
+  struct producer producer = {0, 0};
+  struct consumer consumers[MAX_CONSUMERS] = {{0, 0}};
   size_t num_consumers = 0;
 
   size_t bufsize = DEFAULT_BUFFER_SIZE;
+  long long raw_bufsize;
   char *buffer = NULL;
+  static_assert(sizeof(size_t) == sizeof(long long),
+                "can't manipulate buffer sizes on this platform");
 
   for (int opt; (opt = getopt(argc, argv, "b:i:o:r:s")) != -1;) {
     switch (opt) {
     case 'b':
-      bufsize = strtoll(optarg, NULL, 10);
-      // TODO: check!
+      raw_bufsize = strtoll(optarg, NULL, 10);
+      CHECK_OR_GOTO_WITH_MSG(
+          cleanup, rv, 1, "can't read buffer size",
+          raw_bufsize > 0ll && !strtoll_overflew(raw_bufsize));
+      bufsize = raw_bufsize;
       break;
     case 'i':
       CHECK_OR_GOTO(cleanup, rv, 1,
@@ -92,7 +107,8 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "please specify a producer", producer);
+  CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "please specify a producer",
+                         !is_empty_producer(&producer));
   CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "please specify at least one consumer",
                          num_consumers > 0);
 
@@ -102,16 +118,12 @@ int main(int argc, char *argv[]) {
                          buffer);
 
 cleanup:
-  if (producer) {
-    // producer->destroy(producer);
-    free(producer);
-  }
+  if (!is_empty_producer(&producer))
+    CALL0(producer, destroy);
 
   for (size_t i = MAX_CONSUMERS; i--;)
-    if (consumers[i]) {
-      // consumers[i]->destroy(consumers[i]);
-      free(consumers[i]);
-    }
+    if (!is_empty_consumer(&consumers[i]))
+      CALL0(consumers[i], destroy);
   free(buffer);
 
   return rv;
