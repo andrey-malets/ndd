@@ -44,18 +44,18 @@ void file_destroy(void *data) {
     this->fd = -1;
   }
 
-  free(this);
+  free(data);
 }
 
 static const struct producer_ops input_ops = {
-  .get_fd = file_get_fd,
-  .init   = file_init,
+  .get_fd  = file_get_fd,
+  .init    = file_init,
   .destroy = file_destroy
 };
 
 static const struct consumer_ops output_ops = {
-  .get_fd = file_get_fd,
-  .init   = file_init,
+  .get_fd  = file_get_fd,
+  .init    = file_init,
   .destroy = file_destroy
 };
 
