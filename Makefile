@@ -1,5 +1,5 @@
 CC=clang
-CFLAGS=-pedantic -Werror -Wall -std=c11
+CFLAGS=-pedantic -Werror -Wall -std=c11 -D_GNU_SOURCE
 
 ndd: main.o file.o socket.o struct.o
 	$(CC) -o $@ $^
