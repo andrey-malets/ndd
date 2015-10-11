@@ -13,6 +13,7 @@
   do { \
     if (!(cond)) { \
       fputs(msg, stderr); \
+      fputs("\n", stderr); \
       return (rv); \
     } \
   } while (0)
@@ -20,8 +21,10 @@
 #define CHECK_OR_GOTO_WITH_MSG(label, rv, val, msg, cond) \
   do { \
     if (!(cond)) { \
-      if ((msg)) \
+      if ((msg)) { \
         fputs((msg), stderr); \
+        fputs("\n", stderr); \
+      } \
       (rv) = (val); \
       goto label; \
     } \
