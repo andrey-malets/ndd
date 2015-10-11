@@ -117,11 +117,18 @@ int main(int argc, char *argv[]) {
   CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "can't allocate memory for buffer",
                          buffer);
 
+  for (size_t i = 0; i != num_consumers; ++i)
+    CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "failed to initialize consumer",
+                           CALL0(consumers[i], init));
+
+  CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "failed to initialize producer",
+                         CALL0(producer, init));
+
 cleanup:
   if (!is_empty_producer(&producer))
     CALL0(producer, destroy);
 
-  for (size_t i = MAX_CONSUMERS; i--;)
+  for (size_t i = num_consumers; i--;)
     if (!is_empty_consumer(&consumers[i]))
       CALL0(consumers[i], destroy);
   free(buffer);
