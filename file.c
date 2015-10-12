@@ -152,15 +152,17 @@ struct file_data *get_file_data(const char *filename, int mode) {
   struct file_data *data = malloc(
       sizeof(struct file_data) + strlen(filename) + 1);
 
-  data->fd = -1;
-  data->afd = -1;
-  data->ctx = 0;
-  memset(&data->cb, 0, sizeof(data->cb));
+  if (data) {
+    data->fd = -1;
+    data->afd = -1;
+    data->ctx = 0;
+    memset(&data->cb, 0, sizeof(data->cb));
 
-  data->offset = 0;
-  data->pending_size = 0;
-  data->mode = mode;
-  strcpy(data->filename, filename);
+    data->offset = 0;
+    data->pending_size = 0;
+    data->mode = mode;
+    strcpy(data->filename, filename);
+  }
 
   return data;
 }
