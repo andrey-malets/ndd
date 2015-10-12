@@ -10,4 +10,52 @@
 #define CALL0(object, method) object.ops->method(object.data)
 #define CALL(object, method, ...) object.ops->method(object.data, __VA_ARGS__)
 
-#define GET(type, obj, ptr) type *obj = (type *)(ptr)
+#define GET(type, obj, ptr) \
+  type *obj = (type *)(ptr); \
+  assert(obj)
+
+
+#define CHECK_SYSCALL_OR_RETURN(rv, res, msg, arg) \
+  do { \
+    if ((res) == -1) { \
+      fputs(msg, stderr); \
+      perror(arg); \
+      return (rv); \
+    } \
+  } while (0)
+
+
+#define COND_CHECK_SYSCALL_OR_WARN(var, value, call, msg, arg) \
+  do { \
+    if (var != value) { \
+      if ((call) == -1) { \
+        fputs(msg, stderr); \
+        perror(arg); \
+      } \
+    } \
+    var = value; \
+  } while (0)
+
+#define CHECK_OR_RETURN(rv, cond, msg) \
+  do { \
+    if (!(cond)) { \
+      fputs(msg, stderr); \
+      fputs("\n", stderr); \
+      return (rv); \
+    } \
+  } while (0)
+
+#define CHECK_OR_GOTO_WITH_MSG(label, rv, val, msg, cond) \
+  do { \
+    if (!(cond)) { \
+      if ((msg)) { \
+        fputs((msg), stderr); \
+        fputs("\n", stderr); \
+      } \
+      (rv) = (val); \
+      goto label; \
+    } \
+  } while (0)
+
+#define CHECK_OR_GOTO(label, rv, val, cond) \
+  CHECK_OR_GOTO_WITH_MSG(label, rv, val, NULL, cond)

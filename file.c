@@ -1,4 +1,5 @@
 #include "file.h"
+#include "macro.h"
 #include "struct.h"
 
 #include <assert.h>
@@ -27,23 +28,15 @@ bool file_init(void *data) {
   GET(struct file_data, this, data);
   int mode = (this->mode == R) ? O_RDONLY : O_WRONLY | O_CREAT;
   mode |= O_NONBLOCK;
-  if ((this->fd = open(this->filename, mode)) == -1) {
-    fputs("failed to open ", stderr);
-    perror(this->filename);
-    return false;
-  }
+  CHECK_SYSCALL_OR_RETURN(false, this->fd = open(this->filename, mode),
+                          "failed to open ", this->filename);
 
-  if ((this->afd = eventfd(0, 0)) == -1) {
-    fputs("failed to initalize eventfd for ", stderr);
-    perror(this->filename);
-    return false;
-  }
+  CHECK_SYSCALL_OR_RETURN(false, this->afd = eventfd(0, 0),
+                          "failed to initialize eventfd for ", this->filename);
 
-  if (syscall(SYS_io_setup, 1, &this->ctx) == -1) {
-    fputs("failed to initalize aio control block for ", stderr);
-    perror(this->filename);
-    return false;
-  }
+  CHECK_SYSCALL_OR_RETURN(false, syscall(SYS_io_setup, 1, &this->ctx),
+                          "failed to initalize aio control block for ",
+                          this->filename);
 
   this->cb.aio_fildes = this->fd;
   this->cb.aio_lio_opcode =
@@ -55,16 +48,6 @@ bool file_init(void *data) {
   return true;
 }
 
-void close_or_warn(int *fd, const char *filename, const char *msg) {
-  if (*fd != -1) {
-    if (close(*fd)) {
-      fputs(msg, stderr);
-      perror(filename);
-    }
-    *fd = -1;
-  }
-}
-
 void file_destroy(void *data) {
   GET(struct file_data, this, data);
 
@@ -72,16 +55,15 @@ void file_destroy(void *data) {
   this->pending_size = 0;
   memset(&this->cb, 0, sizeof(this->cb));
 
-  if (this->ctx != 0) {
-    if (syscall(SYS_io_destroy, this->ctx) == -1) {
-        fputs("failed to close aio control block for ", stderr);
-        perror(this->filename);
-    }
-    this->ctx = 0;
-  }
+  COND_CHECK_SYSCALL_OR_WARN(
+      this->ctx, 0, syscall(SYS_io_destroy, this->ctx),
+      "failed to close aio control block for ", this->filename);
 
-  close_or_warn(&this->afd, this->filename, "failed to close eventfd for ");
-  close_or_warn(&this->fd, this->filename, "failed to close ");
+  COND_CHECK_SYSCALL_OR_WARN(this->afd, -1, close(this->afd),
+                             "failed to close eventfd for ", this->filename);
+
+  COND_CHECK_SYSCALL_OR_WARN(this->fd, -1, close(this->fd),
+                             "failed to close ", this->filename);
 
   free(data);
 }
@@ -104,11 +86,8 @@ ssize_t file_enqueue(void *data, void *buf, size_t count) {
   // TODO: check file size
 
   struct iocb *cbs = {&this->cb};
-  if (syscall(SYS_io_submit, this->ctx, 1, &cbs) == -1) {
-    fputs("failed to submit aio request for ", stderr);
-    perror(this->filename);
-    return -1;
-  }
+  CHECK_SYSCALL_OR_RETURN(-1, syscall(SYS_io_submit, this->ctx, 1, &cbs),
+                          "failed to submit aio request for ", this->filename);
 
   this->pending_size = count;
 
@@ -119,11 +98,9 @@ bool file_signal(void *data) {
   GET(struct file_data, this, data);
 
   struct io_event event;
-  if (syscall(SYS_io_getevents, this->ctx, 1, 1, &event, NULL) != 1) {
-    fputs("failed to get completed aio events for ", stderr);
-    perror(this->filename);
-    return false;
-  }
+  CHECK_SYSCALL_OR_RETURN(
+      false, syscall(SYS_io_getevents, this->ctx, 1, 1, &event, NULL),
+      "failed to get completed aio events for ", this->filename);
 
   this->offset += this->pending_size;
   this->pending_size = 0;

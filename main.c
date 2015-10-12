@@ -1,4 +1,5 @@
 #include "file.h"
+#include "macro.h"
 #include "socket.h"
 #include "struct.h"
 
@@ -11,30 +12,6 @@
 
 #define DEFAULT_BUFFER_SIZE (1024*1024)
 #define MAX_CONSUMERS 2
-
-#define CHECK_OR_RETURN(rv, cond, msg) \
-  do { \
-    if (!(cond)) { \
-      fputs(msg, stderr); \
-      fputs("\n", stderr); \
-      return (rv); \
-    } \
-  } while (0)
-
-#define CHECK_OR_GOTO_WITH_MSG(label, rv, val, msg, cond) \
-  do { \
-    if (!(cond)) { \
-      if ((msg)) { \
-        fputs((msg), stderr); \
-        fputs("\n", stderr); \
-      } \
-      (rv) = (val); \
-      goto label; \
-    } \
-  } while (0)
-
-#define CHECK_OR_GOTO(label, rv, val, cond) \
-  CHECK_OR_GOTO_WITH_MSG(label, rv, val, NULL, cond)
 
 int init_producer(struct producer *producer,
                   struct producer (*fn)(const char*),
