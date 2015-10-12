@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -18,8 +19,7 @@ struct file_data {
   aio_context_t ctx;
   struct iocb cb;
 
-  size_t offset;
-  size_t pending_size;
+  uint64_t offset;
   enum { R, W } mode;
   char filename[];
 };
@@ -52,7 +52,6 @@ void file_destroy(void *data) {
   GET(struct file_data, this, data);
 
   this->offset = 0;
-  this->pending_size = 0;
   memset(&this->cb, 0, sizeof(this->cb));
 
   COND_CHECK_SYSCALL_OR_WARN(
@@ -68,12 +67,16 @@ void file_destroy(void *data) {
   free(data);
 }
 
+uint32_t file_get_epoll_event(void *data) {
+  return EPOLLIN;
+}
+
 int file_get_fd(void *data) {
   GET(struct file_data, this, data);
   return this->afd;
 }
 
-ssize_t file_enqueue(void *data, void *buf, size_t count) {
+ssize_t file_enqueue(void *data, void *buf, size_t count, bool *eof) {
   GET(struct file_data, this, data);
 
   static_assert(
@@ -83,18 +86,20 @@ ssize_t file_enqueue(void *data, void *buf, size_t count) {
   this->cb.aio_nbytes = count;
   this->cb.aio_offset = this->offset;
 
-  // TODO: check file size
-
   struct iocb *cbs = {&this->cb};
   CHECK_SYSCALL_OR_RETURN(-1, syscall(SYS_io_submit, this->ctx, 1, &cbs),
                           "failed to submit aio request for ", this->filename);
-
-  this->pending_size = count;
-
-  return count;
+  // Here we don't know.
+  *eof = false;
+  return 0;
 }
 
-bool file_signal(void *data) {
+ssize_t file_consume(void *data, void *buf, size_t count) {
+  bool unused;
+  return file_enqueue(data, buf, count, &unused);
+}
+
+ssize_t file_signal(void *data, bool *eof) {
   GET(struct file_data, this, data);
 
   struct io_event event;
@@ -102,27 +107,34 @@ bool file_signal(void *data) {
       false, syscall(SYS_io_getevents, this->ctx, 1, 1, &event, NULL),
       "failed to get completed aio events for ", this->filename);
 
-  this->offset += this->pending_size;
-  this->pending_size = 0;
-  return true;
+  this->offset += event.res;
+  *eof = (event.res == 0);
+  return event.res;
+}
+
+ssize_t file_consume_signal(void *data) {
+  bool unused;
+  return file_signal(data, &unused);
 }
 
 static const struct producer_ops input_ops = {
-  .init    = file_init,
-  .destroy = file_destroy,
+  .init             = file_init,
+  .destroy          = file_destroy,
 
-  .get_fd  = file_get_fd,
-  .produce = file_enqueue,
-  .signal  = file_signal,
+  .get_epoll_event  = file_get_epoll_event,
+  .get_fd           = file_get_fd,
+  .produce          = file_enqueue,
+  .signal           = file_signal,
 };
 
 static const struct consumer_ops output_ops = {
-  .init    = file_init,
-  .destroy = file_destroy,
+  .init             = file_init,
+  .destroy          = file_destroy,
 
-  .get_fd  = file_get_fd,
-  .consume = file_enqueue,
-  .signal  = file_signal,
+  .get_epoll_event  = file_get_epoll_event,
+  .get_fd           = file_get_fd,
+  .consume          = file_consume,
+  .signal           = file_consume_signal,
 };
 
 struct file_data *get_file_data(const char *filename, int mode) {
@@ -136,7 +148,6 @@ struct file_data *get_file_data(const char *filename, int mode) {
     memset(&data->cb, 0, sizeof(data->cb));
 
     data->offset = 0;
-    data->pending_size = 0;
     data->mode = mode;
     strcpy(data->filename, filename);
   }

@@ -59,3 +59,6 @@
 
 #define CHECK_OR_GOTO(label, rv, val, cond) \
   CHECK_OR_GOTO_WITH_MSG(label, rv, val, NULL, cond)
+
+
+#define arraysize(arr) (sizeof(arr) / sizeof(arr[0]))
