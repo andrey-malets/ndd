@@ -138,8 +138,8 @@ static const struct consumer_ops output_ops = {
 };
 
 static struct data *construct(const char *filename, int mode) {
-  struct data *data = malloc(
-      sizeof(struct data) + strlen(filename) + 1);
+  assert(filename);
+  struct data *data = malloc(sizeof(struct data) + strlen(filename) + 1);
 
   if (data) {
     data->fd = -1;

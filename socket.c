@@ -3,6 +3,7 @@
 #include "struct.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,11 +78,18 @@ static bool init(void *data) {
             rv = connect(this->sock, i->ai_addr, i->ai_addrlen),
             "warning: connect() failed for one of addresses for ", this->host);
         break;
-      case S:
+      case S: {
+        int reuse = 1;
+        CHECK_SYSCALL_OR_GOTO(
+            cleanup, retval, false,
+            setsockopt(this->sock, SOL_SOCKET, SO_REUSEADDR,
+                       &reuse, sizeof(reuse)),
+            "setsockopt(SO_REUSEADDR) failed for ", this->host);
         CHECK_SYSCALL_OR_WARN(
             rv = bind(this->sock, i->ai_addr, i->ai_addrlen),
             "warning: bind() failed for one of addresses for ", this->host);
         break;
+      }
       default:
         assert(0);
     }
@@ -120,7 +128,7 @@ static void destroy(void *data) {
   GET(struct data, this, data);
   if (this->mode == S)
     COND_CHECK_SYSCALL_OR_WARN(
-        this->sock, -1, close(this->client_sock),
+        this->client_sock, -1, close(this->client_sock),
         "failed to close client socket for ", this->host);
   COND_CHECK_SYSCALL_OR_WARN(this->sock, -1, close(this->sock),
                              "failed to close socket for ", this->host);
@@ -137,12 +145,59 @@ static int get_fd(void *data) {
   return (this->mode == R) ? this->sock : this->client_sock;
 }
 
+static bool would_block(int rv) {
+  return rv == -1 && (errno == EAGAIN || errno == EWOULDBLOCK);
+}
+
+static ssize_t produce(void *data, void *buf, size_t count, bool *eof) {
+  GET(struct data, this, data);
+  ssize_t rv = recv(this->sock, buf, count, MSG_DONTWAIT);
+  if (would_block(rv)) {
+    *eof = false;
+    return 0;
+  } else if (rv == 0) {
+    *eof = true;
+    return 0;
+  }
+
+  CHECK_SYSCALL_OR_RETURN(-1, rv, "recv() failed for ", this->host);
+  return rv;
+}
+
+static ssize_t produce_signal(void *data, bool *eof) {
+  GET(struct data, this, data);
+  char unused;
+  ssize_t rv = recv(this->sock, &unused, 1, MSG_PEEK);
+  CHECK_OR_RETURN(
+      -1, !would_block(rv),
+      "recv() blocked when after notification, shouldn't happen");
+  CHECK_SYSCALL_OR_RETURN(-1, rv, "recv(MSG_PEEK) failed for ", this->host);
+  *eof = (rv == 0);
+  return 0;
+}
+
+static ssize_t consume_signal(void *data) {
+  return 0;
+}
+
+static ssize_t consume(void *data, void *buf, size_t count) {
+  GET(struct data, this, data);
+  ssize_t rv = send(this->client_sock, buf, count, MSG_DONTWAIT);
+  if (would_block(rv))
+    return 0;
+
+  CHECK_SYSCALL_OR_RETURN(-1, rv, "send() failed for ", this->host);
+  return rv;
+}
+
 static const struct producer_ops recv_ops = {
   .init             = init,
   .destroy          = destroy,
 
   .get_epoll_event  = get_epoll_event,
   .get_fd           = get_fd,
+  .produce          = produce,
+  .signal           = produce_signal,
 };
 
 static const struct consumer_ops send_ops = {
@@ -151,11 +206,13 @@ static const struct consumer_ops send_ops = {
 
   .get_epoll_event  = get_epoll_event,
   .get_fd           = get_fd,
+  .consume          = consume,
+  .signal           = consume_signal,
 };
 
 static struct data *construct(const char *spec, int mode) {
-  struct data *data = malloc(
-      sizeof(struct data) + strlen(spec) + 1);
+  assert(spec);
+  struct data *data = malloc(sizeof(struct data) + strlen(spec) + 1);
 
   if (data) {
     data->sock = -1;
