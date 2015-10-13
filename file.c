@@ -13,7 +13,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-struct file_data {
+struct data {
   int fd;
   int afd;
   aio_context_t ctx;
@@ -24,8 +24,8 @@ struct file_data {
   char filename[];
 };
 
-bool file_init(void *data) {
-  GET(struct file_data, this, data);
+static bool init(void *data) {
+  GET(struct data, this, data);
   int mode = (this->mode == R) ? O_RDONLY : O_WRONLY | O_CREAT;
   mode |= O_NONBLOCK;
   CHECK_SYSCALL_OR_RETURN(false, this->fd = open(this->filename, mode),
@@ -48,8 +48,8 @@ bool file_init(void *data) {
   return true;
 }
 
-void file_destroy(void *data) {
-  GET(struct file_data, this, data);
+static void destroy(void *data) {
+  GET(struct data, this, data);
 
   this->offset = 0;
   memset(&this->cb, 0, sizeof(this->cb));
@@ -67,17 +67,17 @@ void file_destroy(void *data) {
   free(data);
 }
 
-uint32_t file_get_epoll_event(void *data) {
+static uint32_t get_epoll_event(void *data) {
   return EPOLLIN;
 }
 
-int file_get_fd(void *data) {
-  GET(struct file_data, this, data);
+static int get_fd(void *data) {
+  GET(struct data, this, data);
   return this->afd;
 }
 
-ssize_t file_enqueue(void *data, void *buf, size_t count, bool *eof) {
-  GET(struct file_data, this, data);
+static ssize_t enqueue(void *data, void *buf, size_t count, bool *eof) {
+  GET(struct data, this, data);
 
   static_assert(
       sizeof(uint64_t) >= sizeof(void *) && sizeof(uint64_t) >= sizeof(size_t),
@@ -94,13 +94,13 @@ ssize_t file_enqueue(void *data, void *buf, size_t count, bool *eof) {
   return 0;
 }
 
-ssize_t file_consume(void *data, void *buf, size_t count) {
+static ssize_t consume(void *data, void *buf, size_t count) {
   bool unused;
-  return file_enqueue(data, buf, count, &unused);
+  return enqueue(data, buf, count, &unused);
 }
 
-ssize_t file_signal(void *data, bool *eof) {
-  GET(struct file_data, this, data);
+static ssize_t signal(void *data, bool *eof) {
+  GET(struct data, this, data);
 
   struct io_event event;
   CHECK_SYSCALL_OR_RETURN(
@@ -112,34 +112,34 @@ ssize_t file_signal(void *data, bool *eof) {
   return event.res;
 }
 
-ssize_t file_consume_signal(void *data) {
+static ssize_t consume_signal(void *data) {
   bool unused;
-  return file_signal(data, &unused);
+  return signal(data, &unused);
 }
 
 static const struct producer_ops input_ops = {
-  .init             = file_init,
-  .destroy          = file_destroy,
+  .init             = init,
+  .destroy          = destroy,
 
-  .get_epoll_event  = file_get_epoll_event,
-  .get_fd           = file_get_fd,
-  .produce          = file_enqueue,
-  .signal           = file_signal,
+  .get_epoll_event  = get_epoll_event,
+  .get_fd           = get_fd,
+  .produce          = enqueue,
+  .signal           = signal,
 };
 
 static const struct consumer_ops output_ops = {
-  .init             = file_init,
-  .destroy          = file_destroy,
+  .init             = init,
+  .destroy          = destroy,
 
-  .get_epoll_event  = file_get_epoll_event,
-  .get_fd           = file_get_fd,
-  .consume          = file_consume,
-  .signal           = file_consume_signal,
+  .get_epoll_event  = get_epoll_event,
+  .get_fd           = get_fd,
+  .consume          = consume,
+  .signal           = consume_signal,
 };
 
-struct file_data *get_file_data(const char *filename, int mode) {
-  struct file_data *data = malloc(
-      sizeof(struct file_data) + strlen(filename) + 1);
+static struct data *construct(const char *filename, int mode) {
+  struct data *data = malloc(
+      sizeof(struct data) + strlen(filename) + 1);
 
   if (data) {
     data->fd = -1;
@@ -156,9 +156,9 @@ struct file_data *get_file_data(const char *filename, int mode) {
 }
 
 struct producer get_file_reader(const char *filename) {
-  return (struct producer) {&input_ops, get_file_data(filename, R)};
+  return (struct producer) {&input_ops, construct(filename, R)};
 }
 
 struct consumer get_file_writer(const char *filename) {
-  return (struct consumer) {&output_ops, get_file_data(filename, W)};
+  return (struct consumer) {&output_ops, construct(filename, W)};
 }
