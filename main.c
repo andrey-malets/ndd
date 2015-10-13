@@ -25,7 +25,6 @@ int init_producer(struct producer *producer,
   *producer = fn(arg);
   CHECK_OR_RETURN(0, !is_empty_producer(producer),
                   "failed to construct producer");
-
   return 1;
 }
 
@@ -59,7 +58,7 @@ int main(int argc, char *argv[]) {
   static_assert(sizeof(size_t) == sizeof(long long),
                 "can't manipulate buffer sizes on this platform");
 
-  for (int opt; (opt = getopt(argc, argv, "B:b:i:o:r:s")) != -1;) {
+  for (int opt; (opt = getopt(argc, argv, "B:b:i:o:r:s:")) != -1;) {
     switch (opt) {
     case 'B':
     case 'b': {
