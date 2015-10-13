@@ -216,6 +216,8 @@ static struct data *construct(const char *spec, int mode) {
 
   if (data) {
     data->sock = -1;
+    data->client_sock = -1;
+
     data->mode = mode;
     char *colon = strchr(spec, ':');
     if (colon) {
