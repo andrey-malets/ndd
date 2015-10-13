@@ -25,6 +25,25 @@
   } while (0)
 
 
+#define CHECK_SYSCALL_OR_GOTO(label, retval, value, call, msg, arg) \
+  do { \
+    if ((call) == -1) { \
+      fputs(msg, stderr); \
+      perror(arg); \
+      (retval) = (value); \
+      goto label; \
+    } \
+  } while (0)
+
+
+#define CHECK_SYSCALL_OR_WARN(call, msg, arg) \
+  do { \
+    if ((call) == -1) { \
+      fputs(msg, stderr); \
+      perror(arg); \
+    } \
+  } while (0)
+
 #define COND_CHECK_SYSCALL_OR_WARN(var, value, call, msg, arg) \
   do { \
     if (var != value) { \

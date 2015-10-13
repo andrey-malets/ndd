@@ -40,7 +40,7 @@ int add_consumer(struct consumer *consumers,
   return 1;
 }
 
-bool strtoll_overflew(long long value) {
+static bool strtoll_overflew(long long value) {
   return (value == LLONG_MIN || value == LLONG_MAX) && errno == ERANGE;
 }
 
