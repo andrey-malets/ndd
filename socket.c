@@ -16,6 +16,8 @@
 #define DEFAULT_PORT "3634"
 #define PORT_MAX_CHARS 5
 
+static const unsigned int CONNECT_BACKOFF[] = {0, 1, 3, 5};
+
 struct data {
   int sock;
   int client_sock;
@@ -24,6 +26,30 @@ struct data {
   char port[PORT_MAX_CHARS+1];
   char host[];
 };
+
+static bool refused(int rv) {
+  return rv == -1 && errno == ECONNREFUSED;
+}
+
+static int try_connect(int socket, struct addrinfo *ai, const char *host) {
+  int rv = -1;
+  for (size_t i = 0; i != arraysize(CONNECT_BACKOFF); ++i) {
+    // ignore signals
+    sleep(CONNECT_BACKOFF[i]);
+
+    rv = connect(socket, ai->ai_addr, ai->ai_addrlen);
+
+    if (refused(rv))
+      continue;
+    CHECK_SYSCALL_OR_WARN(
+        rv, "warning: connect() failed for one of addresses for ", host);
+    return rv;
+  }
+
+  CHECK_SYSCALL_OR_WARN(
+      rv, "warning: connect() failed for one of addresses for ", host);
+  return rv;
+}
 
 static struct addrinfo get_hints(int mode) {
   struct addrinfo rv;
@@ -74,9 +100,7 @@ static bool init(void *data) {
     int rv = -1;
     switch (this->mode) {
       case R:
-        CHECK_SYSCALL_OR_WARN(
-            rv = connect(this->sock, i->ai_addr, i->ai_addrlen),
-            "warning: connect() failed for one of addresses for ", this->host);
+        rv = try_connect(this->sock, i, this->host);
         break;
       case S: {
         int reuse = 1;
