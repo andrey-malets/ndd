@@ -12,7 +12,6 @@
 #include <stdlib.h>
 
 #define DEFAULT_BUFFER_SIZE (1024*1024)
-#define MAX_CONSUMERS 2
 
 #define DEFAULT_BLOCK_SIZE (128*1024)
 
@@ -47,9 +46,7 @@ static bool strtoll_overflew(long long value) {
 int main(int argc, char *argv[]) {
   int rv = 0;
 
-  struct producer producer = {0, 0};
-  struct consumer consumers[MAX_CONSUMERS] = {{0, 0}};
-  size_t num_consumers = 0;
+  struct state state = {{0, 0}, 0, {{0, 0}}};
 
   size_t buffer_size = DEFAULT_BUFFER_SIZE;
   size_t block_size = DEFAULT_BLOCK_SIZE;
@@ -72,20 +69,21 @@ int main(int argc, char *argv[]) {
     }
     case 'i':
       CHECK_OR_GOTO(cleanup, rv, 1,
-                    init_producer(&producer, get_file_reader, optarg));
+                    init_producer(&state.producer, get_file_reader, optarg));
       break;
     case 'o':
       CHECK_OR_GOTO(cleanup, rv, 1,
-          add_consumer(consumers, &num_consumers, get_file_writer, optarg));
+                    add_consumer(state.consumers, &state.num_consumers,
+                                 get_file_writer, optarg));
       break;
     case 'r':
       CHECK_OR_GOTO(cleanup, rv, 1,
-                    init_producer(&producer, get_socket_reader, optarg));
+                    init_producer(&state.producer, get_socket_reader, optarg));
       break;
     case 's':
-      CHECK_OR_GOTO(
-          cleanup, rv, 1,
-          add_consumer(consumers, &num_consumers, get_socket_writer, optarg));
+      CHECK_OR_GOTO(cleanup, rv, 1,
+                    add_consumer(state.consumers, &state.num_consumers,
+                                 get_socket_writer, optarg));
       break;
     }
   }
@@ -98,27 +96,27 @@ int main(int argc, char *argv[]) {
       buffer_size % block_size == 0);
 
   CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "please specify a producer",
-                         !is_empty_producer(&producer));
+                         !is_empty_producer(&state.producer));
   CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "please specify at least one consumer",
-                         num_consumers > 0);
+                         state.num_consumers > 0);
 
-  for (size_t i = 0; i != num_consumers; ++i)
+  for (size_t i = 0; i != state.num_consumers; ++i)
     CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "failed to initialize consumer",
-                           CALL0(consumers[i], init));
+                           CALL0(state.consumers[i], init));
 
   CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "failed to initialize producer",
-                         CALL0(producer, init));
+                         CALL0(state.producer, init));
 
   CHECK_OR_GOTO_WITH_MSG(
       cleanup, rv, 1, "transfer failed",
-      transfer(buffer_size, block_size, producer, consumers, num_consumers));
+      transfer(buffer_size, block_size, &state));
 
 cleanup:
-  if (!is_empty_producer(&producer))
-    CALL0(producer, destroy);
+  if (!is_empty_producer(&state.producer))
+    CALL0(state.producer, destroy);
 
-  for (size_t i = num_consumers; i--;)
-    if (!is_empty_consumer(&consumers[i]))
-      CALL0(consumers[i], destroy);
+  for (size_t i = state.num_consumers; i--;)
+    if (!is_empty_consumer(&state.consumers[i]))
+      CALL0(state.consumers[i], destroy);
   return rv;
 }

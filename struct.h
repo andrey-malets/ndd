@@ -37,3 +37,11 @@ struct consumer {
 
 bool is_empty_producer(struct producer *producer);
 bool is_empty_consumer(struct consumer *consumer);
+
+#define MAX_CONSUMERS 2
+
+struct state {
+  struct producer producer;
+  size_t num_consumers;
+  struct consumer consumers[MAX_CONSUMERS];
+};
