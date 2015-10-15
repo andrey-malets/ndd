@@ -100,12 +100,17 @@ bool transfer(size_t buffer_size, size_t block_size,
       for (int i = 0; i != num_events; ++i) {
         struct entry *entry = events[i].data.ptr;
         if (entry->busy) {
+          ssize_t moved;
           switch (entry->type) {
           case P:
-            entry->offset += CALL(*entry->producer, signal, &eof);
+            moved = CALL(*entry->producer, signal, &eof);
+            CHECK_OR_GOTO(cleanup, rv, false, moved != -1);
+            entry->offset += moved;
             break;
           case C:
-            entry->offset += CALL0(*entry->consumer, signal);
+            moved = CALL0(*entry->consumer, signal);
+            CHECK_OR_GOTO(cleanup, rv, false, moved != -1);
+            entry->offset += moved;
             break;
           default:
             assert(0);
