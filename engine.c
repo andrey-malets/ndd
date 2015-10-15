@@ -139,8 +139,8 @@ bool transfer(size_t buffer_size, size_t block_size,
           offset = sbegin;
           size = buffer_size - sbegin;
         } else if (sbegin < send) {
-          offset = 0;
-          size = send;
+          offset = sbegin;
+          size = send - sbegin;
         } else if (begin == end) {
           offset = sbegin;
           size = buffer_size - sbegin;
@@ -177,8 +177,8 @@ bool transfer(size_t buffer_size, size_t block_size,
             offset = send;
             size = buffer_size - send;
           } else if (begin > end) {
-            offset = sbegin;
-            size = buffer_size - sbegin;
+            offset = send;
+            size = buffer_size - send;
           }
 
           if (size) {
