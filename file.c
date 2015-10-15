@@ -28,7 +28,8 @@ static bool init(void *data) {
   GET(struct data, this, data);
   int mode = (this->mode == R) ? O_RDONLY : O_WRONLY | O_CREAT;
   mode |= O_NONBLOCK;
-  CHECK_SYSCALL_OR_RETURN(false, this->fd = open(this->filename, mode, S_IWUSR),
+  CHECK_SYSCALL_OR_RETURN(false, this->fd = open(this->filename, mode,
+                                                 S_IWUSR|S_IRUSR),
                           "failed to open ", this->filename);
 
   CHECK_SYSCALL_OR_RETURN(false, this->afd = eventfd(0, 0),
