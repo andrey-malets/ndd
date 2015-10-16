@@ -12,8 +12,8 @@
 #include <stdlib.h>
 
 #define DEFAULT_BUFFER_SIZE (16*1024*1024)
-
 #define DEFAULT_BLOCK_SIZE (1024*1024)
+#define DEFAULT_SLEEP_US 1000
 
 int init_producer(struct producer *producer,
                   struct producer (*fn)(const char*),
@@ -43,6 +43,10 @@ static bool strtoll_overflew(long long value) {
   return (value == LLONG_MIN || value == LLONG_MAX) && errno == ERANGE;
 }
 
+static bool strtol_overflew(long value) {
+  return (value == LONG_MIN || value == LONG_MAX) && errno == ERANGE;
+}
+
 int main(int argc, char *argv[]) {
   int rv = 0;
 
@@ -50,12 +54,13 @@ int main(int argc, char *argv[]) {
 
   size_t buffer_size = DEFAULT_BUFFER_SIZE;
   size_t block_size = DEFAULT_BLOCK_SIZE;
+  long sleep_us = DEFAULT_SLEEP_US;
 
   long long raw_size;
   static_assert(sizeof(size_t) == sizeof(long long),
                 "can't manipulate buffer sizes on this platform");
 
-  for (int opt; (opt = getopt(argc, argv, "B:b:i:o:r:s:")) != -1;) {
+  for (int opt; (opt = getopt(argc, argv, "B:b:i:o:r:s:t:")) != -1;) {
     switch (opt) {
     case 'B':
     case 'b': {
@@ -85,6 +90,16 @@ int main(int argc, char *argv[]) {
                     add_consumer(state.consumers, &state.num_consumers,
                                  get_socket_writer, optarg));
       break;
+    case 't': {
+      char *end = NULL;
+      long raw_sleep;
+      raw_sleep = strtol(optarg, &end, 10);
+      CHECK_OR_GOTO_WITH_MSG(
+          cleanup, rv, 1, "can't read sleep timeout",
+          *end == 0 && raw_sleep >= 0l && !strtol_overflew(raw_sleep));
+      sleep_us = raw_sleep;
+      break;
+    }
     }
   }
 
@@ -109,7 +124,7 @@ int main(int argc, char *argv[]) {
 
   CHECK_OR_GOTO_WITH_MSG(
       cleanup, rv, 1, "transfer failed",
-      transfer(buffer_size, block_size, &state));
+      transfer(buffer_size, block_size, sleep_us, &state));
 
 cleanup:
   if (!is_empty_producer(&state.producer))

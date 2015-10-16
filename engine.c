@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/epoll.h>
+#include <time.h>
 #include <unistd.h>
 
 static_assert(sizeof(uint64_t) >= sizeof(size_t),
@@ -73,7 +74,7 @@ static bool prepare(struct state *const state,
 }
 
 bool transfer(size_t buffer_size, size_t block_size,
-              struct state *const state) {
+              long sleep_us, struct state *const state) {
   bool rv = true;
   struct entry index[1+MAX_CONSUMERS];
   struct epoll_event events[1+MAX_CONSUMERS];
@@ -193,6 +194,14 @@ bool transfer(size_t buffer_size, size_t block_size,
           }
         }
       }
+    }
+
+    if (sleep_us) {
+      struct timespec timeout = {
+        .tv_sec = 0, .tv_nsec = sleep_us * 1000
+      };
+      CHECK_SYSCALL_OR_GOTO(cleanup, rv, false, nanosleep(&timeout, NULL),
+                            "nanosleep() ", "failed");
     }
   }
 
