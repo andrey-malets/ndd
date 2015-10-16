@@ -11,9 +11,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define DEFAULT_BUFFER_SIZE (1024*1024)
+#define DEFAULT_BUFFER_SIZE (16*1024*1024)
 
-#define DEFAULT_BLOCK_SIZE (128*1024)
+#define DEFAULT_BLOCK_SIZE (1024*1024)
 
 int init_producer(struct producer *producer,
                   struct producer (*fn)(const char*),
