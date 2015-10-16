@@ -8,7 +8,7 @@
 #include <sys/types.h>
 
 struct producer_ops {
-  METHOD0(bool, init);
+  METHOD(bool, init, size_t block_size);
   METHOD0(void, destroy);
 
   METHOD0(uint32_t, get_epoll_event);
@@ -22,7 +22,7 @@ struct producer {
 };
 
 struct consumer_ops {
-  METHOD0(bool, init);
+  METHOD(bool, init, size_t block_size);
   METHOD0(void, destroy);
 
   METHOD0(uint32_t, get_epoll_event);

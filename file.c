@@ -24,7 +24,7 @@ struct data {
   char filename[];
 };
 
-static bool init(void *data) {
+static bool init(void *data, size_t block_size) {
   GET(struct data, this, data);
   int mode = (this->mode == R) ? O_RDONLY : O_WRONLY | O_CREAT;
   mode |= O_NONBLOCK;

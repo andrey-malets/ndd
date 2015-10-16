@@ -102,10 +102,10 @@ int main(int argc, char *argv[]) {
 
   for (size_t i = 0; i != state.num_consumers; ++i)
     CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "failed to initialize consumer",
-                           CALL0(state.consumers[i], init));
+                           CALL(state.consumers[i], init, block_size));
 
   CHECK_OR_GOTO_WITH_MSG(cleanup, rv, 1, "failed to initialize producer",
-                         CALL0(state.producer, init));
+                         CALL(state.producer, init, block_size));
 
   CHECK_OR_GOTO_WITH_MSG(
       cleanup, rv, 1, "transfer failed",

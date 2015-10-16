@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,7 +76,7 @@ static struct addrinfo get_hints(int mode) {
   return rv;
 }
 
-static bool init(void *data) {
+static bool init(void *data, size_t block_size) {
   GET(struct data, this, data);
 
   bool retval = true;
@@ -142,6 +143,16 @@ static bool init(void *data) {
         this->client_sock = accept(this->sock, NULL, NULL),
         "accept() failed for ", this->host);
   }
+
+  assert(block_size <= INT_MAX);
+  const int optvalue = block_size;
+  CHECK_SYSCALL_OR_GOTO(
+      cleanup, retval, false,
+      setsockopt(this->mode == S ? this->client_sock : this->sock,
+                 SOL_SOCKET,
+                 this->mode == S ? SO_SNDBUFFORCE : SO_RCVBUFFORCE,
+                 &optvalue, sizeof(optvalue)),
+      "setsockopt(*_BUFFORCE) failed for ", this->host);
 
 cleanup:
   freeaddrinfo(result);
