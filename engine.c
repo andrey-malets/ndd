@@ -86,9 +86,6 @@ bool transfer(size_t buffer_size, size_t block_size,
   for (;;) {
     INC(state->stats, total_cycles);
 
-    for (size_t i = 0; i != 1+state->num_consumers; ++i)
-      index[i].was_busy = index[i].busy;
-
     if (waiting) {
       INC(state->stats, waited_cycles);
       int num_events;
@@ -98,26 +95,23 @@ bool transfer(size_t buffer_size, size_t block_size,
           "epoll_wait ", "failed");
       for (int i = 0; i != num_events; ++i) {
         struct entry *entry = events[i].data.ptr;
-        if (entry->busy) {
-          ssize_t moved;
-          switch (entry->type) {
-          case P:
-            moved = CALL(*entry->producer, signal, &eof);
-            CHECK_OR_GOTO(cleanup, rv, false, moved != -1);
-            entry->offset += moved;
-            break;
-          case C:
-            moved = CALL0(*entry->consumer, signal);
-            CHECK_OR_GOTO(cleanup, rv, false, moved != -1);
-            entry->offset += moved;
-            break;
-          default:
-            assert(0);
-            break;
-          }
-          entry->busy = false;
-          waiting -= 1;
+        assert(entry->busy);
+        ssize_t moved;
+        switch (entry->type) {
+        case P:
+          moved = CALL(*entry->producer, signal, &eof);
+          break;
+        case C:
+          moved = CALL0(*entry->consumer, signal);
+          break;
+        default:
+          assert(0);
+          break;
         }
+        CHECK_OR_GOTO(cleanup, rv, false, moved != -1);
+        entry->offset += moved;
+        entry->busy = false;
+        waiting -= 1;
       }
     }
 
@@ -153,14 +147,6 @@ bool transfer(size_t buffer_size, size_t block_size,
                   buffer+offset, min(block_size, size), &eof)) != -1);
 
           waiting += (index[0].busy = (produced == 0));
-          if (index[0].was_busy != index[0].busy)
-            CHECK(change_wait(epoll_fd, index[0].busy,
-                              CALL0(*index[0].producer, get_fd),
-                              CALL0(*index[0].producer, get_epoll_event),
-                              &index[0]),
-                  ERROR("failed to change waits"),
-                  DO_GOTO(cleanup, rv, false));
-
           index[0].offset += produced;
         } else {
           INC(state->stats, buffer_overruns);
@@ -168,6 +154,16 @@ bool transfer(size_t buffer_size, size_t block_size,
             if (index[1+i].offset == end)
               INC(state->stats, consumer_slowdowns[i]);
           }
+        }
+
+        if (index[0].was_busy != index[0].busy) {
+          CHECK(change_wait(epoll_fd, index[0].busy,
+                            CALL0(*index[0].producer, get_fd),
+                            CALL0(*index[0].producer, get_epoll_event),
+                            &index[0]),
+                ERROR("failed to change waits"),
+                DO_GOTO(cleanup, rv, false));
+          index[0].was_busy = index[0].busy;
         }
       }
     }
@@ -207,13 +203,15 @@ bool transfer(size_t buffer_size, size_t block_size,
             INC(state->stats, buffer_underruns);
           }
 
-          if (index[1+i].was_busy != index[1+i].busy)
+          if (index[1+i].was_busy != index[1+i].busy) {
             CHECK(change_wait(epoll_fd, index[1+i].busy,
                               CALL0(*index[1+i].consumer, get_fd),
                               CALL0(*index[1+i].consumer, get_epoll_event),
                               &index[1+i]),
-                  ERROR("failed to change waits"),
+                  ERROR("failed to change waits "),
                   DO_GOTO(cleanup, rv, false));
+            index[1+i].was_busy = index[1+i].busy;
+          }
         }
       }
     }
