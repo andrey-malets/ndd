@@ -22,9 +22,12 @@
     goto label; \
   } while (0)
 
+#define ERROR(msg) \
+  fputs(msg, stderr)
+
 #define PERROR1(msg, arg) \
   do { \
-    fputs(msg "", stderr); \
+    ERROR(msg); \
     perror(arg); \
   } while (0)
 

@@ -24,6 +24,7 @@ struct entry {
     struct consumer *consumer;
   };
   uint64_t offset;
+  bool was_busy;
   bool busy;
 };
 
@@ -34,49 +35,38 @@ uint64_t min_offset(struct entry *index, size_t num_consumers) {
   return rv;
 }
 
-static bool prepare(struct state *const state,
-                    struct entry *const index,
-                    int epoll_fd) {
+static bool change_wait(int epoll_fd, bool add,
+                        int fd, uint32_t events, void *ptr) {
+  struct epoll_event ev = { .events = events, .data.ptr = ptr };
+  CHECK(SYSCALL(epoll_ctl(epoll_fd, add ? EPOLL_CTL_ADD : EPOLL_CTL_DEL,
+                          fd, &ev)),
+        perror("epoll_ctl() failed"), DO_RETURN(false));
+
+  return true;
+}
+
+static void prepare(struct state *const state, struct entry *const index) {
   index[0] = (struct entry) {
     .type = P,
     .producer = &state->producer,
     .offset = 0,
+    .was_busy = false,
     .busy = false
   };
-
-  struct epoll_event ev = {
-    .events = CALL0(state->producer, get_epoll_event),
-    .data.ptr = &index[0]
-  };
-
-  CHECK_SYSCALL_OR_RETURN(false, epoll_ctl(epoll_fd, EPOLL_CTL_ADD,
-                                           CALL0(state->producer, get_fd), &ev),
-                          "epoll_ctl(EPOLL_CTL_ADD) failed for ", "producer");
 
   for (size_t i = 0; i != state->num_consumers; ++i) {
     index[1+i] = (struct entry) {
       .type = C,
       .consumer = &state->consumers[i],
       .offset = 0,
+      .was_busy = false,
       .busy = false
     };
-
-    ev = (struct epoll_event) {
-      .events = CALL0(state->consumers[i], get_epoll_event),
-      .data.ptr = &index[1+i]
-    };
-
-    CHECK_SYSCALL_OR_RETURN(
-        false, epoll_ctl(epoll_fd, EPOLL_CTL_ADD,
-                         CALL0(state->consumers[i], get_fd), &ev),
-        "epoll_ctl(EPOLL_CTL_ADD) failed for ", "one of consumers");
   }
-
-  return true;
 }
 
 bool transfer(size_t buffer_size, size_t block_size,
-              long sleep_us, struct state *const state) {
+              int sleep_ms, struct state *const state) {
   bool rv = true;
   struct entry index[1+MAX_CONSUMERS];
   struct epoll_event events[1+MAX_CONSUMERS];
@@ -91,16 +81,20 @@ bool transfer(size_t buffer_size, size_t block_size,
   CHECK_OR_GOTO_WITH_MSG(cleanup, rv, false, "can't allocate memory for buffer",
                          buffer = malloc(buffer_size));
 
-  CHECK_OR_GOTO(cleanup, rv, false, prepare(state, index, epoll_fd));
+  prepare(state, index);
 
   for (;;) {
     INC(state->stats, total_cycles);
+
+    for (size_t i = 0; i != 1+state->num_consumers; ++i)
+      index[i].was_busy = index[i].busy;
+
     if (waiting) {
       INC(state->stats, waited_cycles);
       int num_events;
       CHECK_SYSCALL_OR_GOTO(
           cleanup, rv, false,
-          num_events = epoll_wait(epoll_fd, events, waiting, -1),
+          num_events = epoll_wait(epoll_fd, events, waiting, sleep_ms),
           "epoll_wait ", "failed");
       for (int i = 0; i != num_events; ++i) {
         struct entry *entry = events[i].data.ptr;
@@ -159,6 +153,14 @@ bool transfer(size_t buffer_size, size_t block_size,
                   buffer+offset, min(block_size, size), &eof)) != -1);
 
           waiting += (index[0].busy = (produced == 0));
+          if (index[0].was_busy != index[0].busy)
+            CHECK(change_wait(epoll_fd, index[0].busy,
+                              CALL0(*index[0].producer, get_fd),
+                              CALL0(*index[0].producer, get_epoll_event),
+                              &index[0]),
+                  ERROR("failed to change waits"),
+                  DO_GOTO(cleanup, rv, false));
+
           index[0].offset += produced;
         } else {
           INC(state->stats, buffer_overruns);
@@ -204,16 +206,16 @@ bool transfer(size_t buffer_size, size_t block_size,
           } else {
             INC(state->stats, buffer_underruns);
           }
+
+          if (index[1+i].was_busy != index[1+i].busy)
+            CHECK(change_wait(epoll_fd, index[1+i].busy,
+                              CALL0(*index[1+i].consumer, get_fd),
+                              CALL0(*index[1+i].consumer, get_epoll_event),
+                              &index[1+i]),
+                  ERROR("failed to change waits"),
+                  DO_GOTO(cleanup, rv, false));
         }
       }
-    }
-
-    if (sleep_us) {
-      struct timespec timeout = {
-        .tv_sec = 0, .tv_nsec = sleep_us * 1000
-      };
-      CHECK_SYSCALL_OR_GOTO(cleanup, rv, false, nanosleep(&timeout, NULL),
-                            "nanosleep() ", "failed");
     }
   }
 

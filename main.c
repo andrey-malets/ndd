@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
 
   size_t buffer_size = DEFAULT_BUFFER_SIZE;
   size_t block_size = DEFAULT_BLOCK_SIZE;
-  long sleep_us = DEFAULT_SLEEP_US;
+  long sleep_ms = DEFAULT_SLEEP_MS;
 
   long long raw_size;
   static_assert(sizeof(size_t) == sizeof(long long),
@@ -101,8 +101,10 @@ int main(int argc, char *argv[]) {
       raw_sleep = strtol(optarg, &end, 10);
       CHECK_OR_GOTO_WITH_MSG(
           cleanup, rv, 1, "can't read sleep timeout",
-          *end == 0 && raw_sleep >= 0l && !strtol_overflew(raw_sleep));
-      sleep_us = raw_sleep;
+          *end == 0 && raw_sleep >= 0l &&
+              !strtol_overflew(raw_sleep) &&
+              raw_sleep < INT_MAX);
+      sleep_ms = raw_sleep;
       break;
     }
     }
@@ -129,7 +131,7 @@ int main(int argc, char *argv[]) {
 
   CHECK_OR_GOTO_WITH_MSG(
       cleanup, rv, 1, "transfer failed",
-      transfer(buffer_size, block_size, sleep_us, &state));
+      transfer(buffer_size, block_size, sleep_ms, &state));
 
   if (stats_filename)
     CHECK_OR_GOTO_WITH_MSG(
