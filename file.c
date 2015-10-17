@@ -49,6 +49,11 @@ static bool init(void *data, size_t block_size) {
   return true;
 }
 
+static const char *name(void *data) {
+  GET(struct data, this, data);
+  return this->filename;
+}
+
 static void destroy(void *data) {
   GET(struct data, this, data);
 
@@ -120,6 +125,7 @@ static ssize_t consume_signal(void *data) {
 
 static const struct producer_ops input_ops = {
   .init             = init,
+  .name             = name,
   .destroy          = destroy,
 
   .get_epoll_event  = get_epoll_event,
@@ -130,6 +136,7 @@ static const struct producer_ops input_ops = {
 
 static const struct consumer_ops output_ops = {
   .init             = init,
+  .name             = name,
   .destroy          = destroy,
 
   .get_epoll_event  = get_epoll_event,

@@ -146,17 +146,21 @@ static bool init(void *data, size_t block_size) {
 
   assert(block_size <= INT_MAX);
   const int optvalue = block_size;
-  CHECK_SYSCALL_OR_GOTO(
-      cleanup, retval, false,
+  CHECK_SYSCALL_OR_WARN(
       setsockopt(this->mode == S ? this->client_sock : this->sock,
                  SOL_SOCKET,
                  this->mode == S ? SO_SNDBUFFORCE : SO_RCVBUFFORCE,
                  &optvalue, sizeof(optvalue)),
-      "setsockopt(*_BUFFORCE) failed for ", this->host);
+      "warning: setsockopt(*_BUFFORCE) failed for ", this->host);
 
 cleanup:
   freeaddrinfo(result);
   return retval;
+}
+
+static const char *name(void *data) {
+  GET(struct data, this, data);
+  return this->host;
 }
 
 static void destroy(void *data) {
@@ -227,6 +231,7 @@ static ssize_t consume(void *data, void *buf, size_t count) {
 
 static const struct producer_ops recv_ops = {
   .init             = init,
+  .name             = name,
   .destroy          = destroy,
 
   .get_epoll_event  = get_epoll_event,
@@ -237,6 +242,7 @@ static const struct producer_ops recv_ops = {
 
 static const struct consumer_ops send_ops = {
   .init             = init,
+  .name             = name,
   .destroy          = destroy,
 
   .get_epoll_event  = get_epoll_event,

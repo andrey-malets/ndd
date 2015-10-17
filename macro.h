@@ -15,15 +15,31 @@
   assert(obj)
 
 
-#define CHECK_SYSCALL_OR_RETURN(rv, res, msg, arg) \
+#define DO_RETURN(rv) return (rv)
+#define DO_GOTO(label, retval, value) \
   do { \
-    if ((res) == -1) { \
-      fputs(msg, stderr); \
-      perror(arg); \
-      return (rv); \
+    (retval) = (value); \
+    goto label; \
+  } while (0)
+
+#define PERROR1(msg, arg) \
+  do { \
+    fputs(msg "", stderr); \
+    perror(arg); \
+  } while (0)
+
+#define SYSCALL(expr) ((expr) != -1)
+
+#define CHECK(cond, warn, act) \
+  do { \
+    if (!(cond)) {\
+      warn; \
+      act; \
     } \
   } while (0)
 
+#define CHECK_SYSCALL_OR_RETURN(rv, res, msg, arg) \
+  CHECK(SYSCALL(res), PERROR1(msg, arg), DO_RETURN(rv))
 
 #define CHECK_SYSCALL_OR_GOTO(label, retval, value, call, msg, arg) \
   do { \

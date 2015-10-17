@@ -1,0 +1,7 @@
+#pragma once
+
+#define DEFAULT_BUFFER_SIZE (16*1024*1024)
+#define DEFAULT_BLOCK_SIZE (1024*1024)
+#define DEFAULT_SLEEP_US 1000
+
+#define MAX_CONSUMERS 2

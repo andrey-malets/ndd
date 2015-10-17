@@ -1,5 +1,7 @@
 #include "engine.h"
 #include "macro.h"
+#include "stats.h"
+#include "struct.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -92,7 +94,9 @@ bool transfer(size_t buffer_size, size_t block_size,
   CHECK_OR_GOTO(cleanup, rv, false, prepare(state, index, epoll_fd));
 
   for (;;) {
+    INC(state->stats, total_cycles);
     if (waiting) {
+      INC(state->stats, waited_cycles);
       int num_events;
       CHECK_SYSCALL_OR_GOTO(
           cleanup, rv, false,
@@ -156,6 +160,12 @@ bool transfer(size_t buffer_size, size_t block_size,
 
           waiting += (index[0].busy = (produced == 0));
           index[0].offset += produced;
+        } else {
+          INC(state->stats, buffer_overruns);
+          for (size_t i = 0; i != state->num_consumers; ++i) {
+            if (index[1+i].offset == end)
+              INC(state->stats, consumer_slowdowns[i]);
+          }
         }
       }
     }
@@ -191,6 +201,8 @@ bool transfer(size_t buffer_size, size_t block_size,
 
             waiting += (index[1+i].busy = (consumed == 0));
             index[1+i].offset += consumed;
+          } else {
+            INC(state->stats, buffer_underruns);
           }
         }
       }

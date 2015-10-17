@@ -1,7 +1,9 @@
+#include "defaults.h"
 #include "engine.h"
 #include "file.h"
 #include "macro.h"
 #include "socket.h"
+#include "stats.h"
 #include "struct.h"
 
 #include <assert.h>
@@ -10,10 +12,6 @@
 #include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#define DEFAULT_BUFFER_SIZE (16*1024*1024)
-#define DEFAULT_BLOCK_SIZE (1024*1024)
-#define DEFAULT_SLEEP_US 1000
 
 int init_producer(struct producer *producer,
                   struct producer (*fn)(const char*),
@@ -50,7 +48,10 @@ static bool strtol_overflew(long value) {
 int main(int argc, char *argv[]) {
   int rv = 0;
 
-  struct state state = {{0, 0}, 0, {{0, 0}}};
+  struct state state = {{0, 0}, 0, {{0, 0}}, NULL};
+
+  struct stats stats = {0, 0, 0, 0, {0}};
+  const char *stats_filename = NULL;
 
   size_t buffer_size = DEFAULT_BUFFER_SIZE;
   size_t block_size = DEFAULT_BLOCK_SIZE;
@@ -60,7 +61,7 @@ int main(int argc, char *argv[]) {
   static_assert(sizeof(size_t) == sizeof(long long),
                 "can't manipulate buffer sizes on this platform");
 
-  for (int opt; (opt = getopt(argc, argv, "B:b:i:o:r:s:t:")) != -1;) {
+  for (int opt; (opt = getopt(argc, argv, "B:b:i:o:r:s:S:t:")) != -1;) {
     switch (opt) {
     case 'B':
     case 'b': {
@@ -89,6 +90,10 @@ int main(int argc, char *argv[]) {
       CHECK_OR_GOTO(cleanup, rv, 1,
                     add_consumer(state.consumers, &state.num_consumers,
                                  get_socket_writer, optarg));
+      break;
+    case 'S':
+      stats_filename = optarg;
+      state.stats = &stats;
       break;
     case 't': {
       char *end = NULL;
@@ -125,6 +130,11 @@ int main(int argc, char *argv[]) {
   CHECK_OR_GOTO_WITH_MSG(
       cleanup, rv, 1, "transfer failed",
       transfer(buffer_size, block_size, sleep_us, &state));
+
+  if (stats_filename)
+    CHECK_OR_GOTO_WITH_MSG(
+        cleanup, rv, 1, "failed to dump stats",
+        dump_stats(&state, stats_filename));
 
 cleanup:
   if (!is_empty_producer(&state.producer))
