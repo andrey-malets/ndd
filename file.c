@@ -31,7 +31,7 @@ static bool init(void *data, size_t block_size) {
   int mode = (this->mode == R) ? O_RDONLY : O_WRONLY | O_CREAT;
   mode |= O_NONBLOCK;
   CHECK(SYSCALL(this->fd = open(this->filename, mode, S_IWUSR|S_IRUSR)),
-        WITH_THIS("open"), return false);
+        WITH_THIS("call open"), return false);
 
   CHECK(SYSCALL(this->afd = eventfd(0, 0)),
         WITH_THIS("initialize eventfd"), return false);
@@ -67,7 +67,7 @@ static void destroy(void *data) {
   COND_CHECK(this->afd, -1, SYSCALL(close(this->afd)),
              WITH_THIS("close eventfd"));
 
-  COND_CHECK(this->fd, -1, SYSCALL(close(this->fd)), WITH_THIS("close"));
+  COND_CHECK(this->fd, -1, SYSCALL(close(this->fd)), WITH_THIS("call close"));
 
   free(data);
 }
