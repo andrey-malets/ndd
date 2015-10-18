@@ -17,6 +17,12 @@
 
 #define PORT_MAX_CHARS 5
 
+#define CHECK_OR_WARN(value, msg, act) \
+  CHECK(SYSCALL(value), \
+        PERROR1("warning: " msg " failed for one of addresses for", \
+                this->host), \
+        act)
+
 struct data {
   int sock;
   int client_sock;
@@ -26,31 +32,25 @@ struct data {
   char host[];
 };
 
-#define WITH_THIS(act) PERROR1("failed to " act " for", this->filename)
-
 static bool refused(int rv) {
   return rv == -1 && errno == ECONNREFUSED;
 }
 
-static int try_connect(int socket, struct addrinfo *ai, const char *host) {
+static int try_connect(struct data *this, struct addrinfo *ai) {
   int rv = -1;
   for (size_t i = 0; i != arraysize(CONNECT_BACKOFF); ++i) {
     // ignore signals
     sleep(CONNECT_BACKOFF[i]);
 
-    rv = connect(socket, ai->ai_addr, ai->ai_addrlen);
+    rv = connect(this->sock, ai->ai_addr, ai->ai_addrlen);
 
     if (refused(rv))
       continue;
-    CHECK(SYSCALL(rv),
-          PERROR1("warning: connect() failed for one of addresses for", host),
-          ;);
+    CHECK_OR_WARN(rv, "connect()", ;);
     return rv;
   }
 
-  CHECK(
-      SYSCALL(rv),
-      PERROR1("warning: connect() failed for one of addresses for", host), ;);
+  CHECK_OR_WARN(rv, "connect()", ;);
   return rv;
 }
 
@@ -93,10 +93,9 @@ static bool init(void *data, size_t block_size) {
         return false);
 
   for (struct addrinfo *i = result; i != NULL; i = i->ai_next) {
-    CHECK(SYSCALL(this->sock = socket(i->ai_family, i->ai_socktype,
-                                      i->ai_protocol)),
-          PERROR1("warning: socket() failed for one of addresses for",
-                  this->host), ;);
+    CHECK_OR_WARN(
+        (this->sock = socket(i->ai_family, i->ai_socktype, i->ai_protocol)),
+        "socket()", ;);
 
     if (this->sock == -1)
       continue;
@@ -104,18 +103,15 @@ static bool init(void *data, size_t block_size) {
     int rv = -1;
     switch (this->mode) {
       case R:
-        rv = try_connect(this->sock, i, this->host);
+        rv = try_connect(this, i);
         break;
       case S: {
         int reuse = 1;
-        CHECK(SYSCALL(setsockopt(this->sock, SOL_SOCKET, SO_REUSEADDR,
-                                 &reuse, sizeof(reuse))),
-              PERROR1("setsockopt(SO_REUSEADDR) failed for", this->host),
-              goto end);
-        CHECK(SYSCALL(rv = bind(this->sock, i->ai_addr, i->ai_addrlen)),
-              PERROR1("warning: bind() failed for one of addresses for",
-                      this->host),
-              goto end);
+        CHECK_OR_WARN(setsockopt(this->sock, SOL_SOCKET, SO_REUSEADDR,
+                                 &reuse, sizeof(reuse)),
+                      "setsockopt(SO_REUSEADDR)", goto end);
+        CHECK_OR_WARN(rv = bind(this->sock, i->ai_addr, i->ai_addrlen),
+                      "bind()", goto end);
         break;
       }
       default:
@@ -147,13 +143,11 @@ end:
 
   CHECK(block_size <= INT_MAX, ERROR("too big block size"), goto cleanup);
   const int optvalue = block_size;
-  CHECK(SYSCALL(setsockopt(this->mode == S ? this->client_sock : this->sock,
-                SOL_SOCKET,
-                this->mode == S ? SO_SNDBUFFORCE : SO_RCVBUFFORCE,
-                &optvalue, sizeof(optvalue))),
-        PERROR1("warning: setsockopt(*_BUFFORCE) failed for", this->host),
-        ;);
-
+  CHECK_OR_WARN(setsockopt(this->mode == S ? this->client_sock : this->sock,
+                           SOL_SOCKET,
+                           this->mode == S ? SO_SNDBUFFORCE : SO_RCVBUFFORCE,
+                           &optvalue, sizeof(optvalue)),
+                "setsockopt(*_BUFFORCE)", ;);
 cleanup:
   freeaddrinfo(result);
   return retval;
@@ -291,3 +285,5 @@ struct producer get_socket_reader(const char *spec) {
 struct consumer get_socket_writer(const char *spec) {
   return (struct consumer) {&send_ops, construct(spec, S)};
 }
+
+#undef CHECK_OR_WARN
