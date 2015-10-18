@@ -86,9 +86,11 @@ static bool init(void *data, size_t block_size) {
   struct addrinfo hints = get_hints(this->mode);
   struct addrinfo *result;
 
-  CHECK(getaddrinfo(strlen(this->host) ? this->host : NULL, this->port,
-                    &hints, &result) == 0,
-        GAI_PERROR1("getaddrinfo() failed for", this->host), return false);
+  int gai_rv = -1;
+  CHECK((gai_rv = getaddrinfo(strlen(this->host) ? this->host : NULL, this->port,
+                              &hints, &result)) == 0,
+        GAI_PERROR1("getaddrinfo() failed for", this->host, gai_rv),
+        return false);
 
   for (struct addrinfo *i = result; i != NULL; i = i->ai_next) {
     CHECK(SYSCALL(this->sock = socket(i->ai_family, i->ai_socktype,

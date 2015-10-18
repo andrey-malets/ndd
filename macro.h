@@ -32,8 +32,9 @@
     perror(arg); \
   } while (0)
 
-#define GAI_PERROR1(msg, arg) \
-  fprintf(stderr, "%s %s: %s", msg, arg, gai_strerror(errno))
+#define GAI_PERROR1(msg, arg, err) \
+  fprintf(stderr, "%s %s: %s\n", msg, arg, \
+      err == EAI_SYSTEM ? strerror(errno) : gai_strerror(err))
 
 #define SYSCALL(expr) ((expr) != -1)
 
