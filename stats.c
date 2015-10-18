@@ -12,15 +12,15 @@ bool dump_stats(struct state *state, const char *filename) {
   bool rv = true;
   FILE *output = NULL;
   CHECK(output = fopen(filename, "w"),
-        PERROR1("fopen() failed for", filename), DO_GOTO(cleanup, rv, false));
+        PERROR1("fopen() failed for", filename), GOTO_WITH(cleanup, rv, false));
 
 #define PUT(string) \
   CHECK(fputs(string, output) != EOF, \
-        perror("failed fo format output"), DO_GOTO(cleanup, rv, false))
+        perror("failed fo format output"), GOTO_WITH(cleanup, rv, false))
 #define DUMP_VALUE(name, value, suffix) \
   CHECK(fprintf(output, "\"%s\": %"PRIu64"%s", \
                 name, value, suffix) > 0, \
-        PERROR1("failed to dump", name), DO_GOTO(cleanup, rv, false))
+        PERROR1("failed to dump", name), GOTO_WITH(cleanup, rv, false))
 #define DUMP_SIMPLE_VALUE(name, suffix) \
   DUMP_VALUE(# name, state->stats->name, suffix)
 

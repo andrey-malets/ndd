@@ -24,20 +24,20 @@ struct data {
   char filename[];
 };
 
+#define WITH_THIS(act) PERROR1("failed to " act " for", this->filename)
+
 static bool init(void *data, size_t block_size) {
   GET(struct data, this, data);
   int mode = (this->mode == R) ? O_RDONLY : O_WRONLY | O_CREAT;
   mode |= O_NONBLOCK;
-  CHECK_SYSCALL_OR_RETURN(false, this->fd = open(this->filename, mode,
-                                                 S_IWUSR|S_IRUSR),
-                          "failed to open ", this->filename);
+  CHECK(SYSCALL(this->fd = open(this->filename, mode, S_IWUSR|S_IRUSR)),
+        WITH_THIS("open"), return false);
 
-  CHECK_SYSCALL_OR_RETURN(false, this->afd = eventfd(0, 0),
-                          "failed to initialize eventfd for ", this->filename);
+  CHECK(SYSCALL(this->afd = eventfd(0, 0)),
+        WITH_THIS("initialize eventfd"), return false);
 
-  CHECK_SYSCALL_OR_RETURN(false, syscall(SYS_io_setup, 1, &this->ctx),
-                          "failed to initalize aio control block for ",
-                          this->filename);
+  CHECK(SYSCALL(syscall(SYS_io_setup, 1, &this->ctx)),
+        WITH_THIS("initalize aio control block"), return false);
 
   this->cb.aio_fildes = this->fd;
   this->cb.aio_lio_opcode =
@@ -60,15 +60,14 @@ static void destroy(void *data) {
   this->offset = 0;
   memset(&this->cb, 0, sizeof(this->cb));
 
-  COND_CHECK_SYSCALL_OR_WARN(
-      this->ctx, 0, syscall(SYS_io_destroy, this->ctx),
-      "failed to close aio control block for ", this->filename);
+  COND_CHECK(this->ctx, 0,
+             SYSCALL(syscall(SYS_io_destroy, this->ctx)),
+             WITH_THIS("close aio control block"));
 
-  COND_CHECK_SYSCALL_OR_WARN(this->afd, -1, close(this->afd),
-                             "failed to close eventfd for ", this->filename);
+  COND_CHECK(this->afd, -1, SYSCALL(close(this->afd)),
+             WITH_THIS("close eventfd"));
 
-  COND_CHECK_SYSCALL_OR_WARN(this->fd, -1, close(this->fd),
-                             "failed to close ", this->filename);
+  COND_CHECK(this->fd, -1, SYSCALL(close(this->fd)), WITH_THIS("close"));
 
   free(data);
 }
@@ -93,8 +92,9 @@ static ssize_t enqueue(void *data, void *buf, size_t count, bool *eof) {
   this->cb.aio_offset = this->offset;
 
   struct iocb *cbs = {&this->cb};
-  CHECK_SYSCALL_OR_RETURN(-1, syscall(SYS_io_submit, this->ctx, 1, &cbs),
-                          "failed to submit aio request for ", this->filename);
+  CHECK(SYSCALL(syscall(SYS_io_submit, this->ctx, 1, &cbs)),
+        WITH_THIS("submit aio request"), return -1);
+
   // Here we don't know.
   *eof = false;
   return 0;
@@ -109,9 +109,8 @@ static ssize_t signal(void *data, bool *eof) {
   GET(struct data, this, data);
 
   struct io_event event;
-  CHECK_SYSCALL_OR_RETURN(
-      false, syscall(SYS_io_getevents, this->ctx, 1, 1, &event, NULL),
-      "failed to get completed aio events for ", this->filename);
+  CHECK(SYSCALL(syscall(SYS_io_getevents, this->ctx, 1, 1, &event, NULL)),
+        WITH_THIS("get completed aio events"), return -1);
 
   this->offset += event.res;
   *eof = (event.res == 0);
@@ -170,3 +169,5 @@ struct producer get_file_reader(const char *filename) {
 struct consumer get_file_writer(const char *filename) {
   return (struct consumer) {&output_ops, construct(filename, W)};
 }
+
+#undef WITH_THIS

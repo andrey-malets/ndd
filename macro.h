@@ -1,5 +1,7 @@
 #pragma once
 
+#define arraysize(arr) (sizeof(arr) / sizeof(arr[0]))
+
 #define METHOD0(rv, name) rv (*name)(void *ptr)
 #define METHOD(rv, name, ...) rv (*name)(void *ptr, __VA_ARGS__)
 
@@ -15,88 +17,37 @@
   assert(obj)
 
 
-#define DO_RETURN(rv) return (rv)
-#define DO_GOTO(label, retval, value) \
+#define GOTO_WITH(label, retval, value) \
   do { \
     (retval) = (value); \
     goto label; \
   } while (0)
 
 #define ERROR(msg) \
-  fputs(msg, stderr)
+  fputs(msg "\n", stderr)
 
 #define PERROR1(msg, arg) \
   do { \
-    ERROR(msg); \
+    fputs(msg " ", stderr); \
     perror(arg); \
   } while (0)
 
+#define GAI_PERROR1(msg, arg) \
+  fprintf(stderr, "%s %s: %s", msg, arg, gai_strerror(errno))
+
 #define SYSCALL(expr) ((expr) != -1)
 
-#define CHECK(cond, warn, act) \
+#define CHECK(cond, alert, act) \
   do { \
     if (!(cond)) {\
-      warn; \
+      alert; \
       act; \
     } \
   } while (0)
 
-#define CHECK_SYSCALL_OR_RETURN(rv, res, msg, arg) \
-  CHECK(SYSCALL(res), PERROR1(msg, arg), DO_RETURN(rv))
-
-#define CHECK_SYSCALL_OR_GOTO(label, retval, value, call, msg, arg) \
+#define COND_CHECK(var, value, cond, alert) \
   do { \
-    if ((call) == -1) { \
-      fputs(msg, stderr); \
-      perror(arg); \
-      (retval) = (value); \
-      goto label; \
-    } \
-  } while (0)
-
-
-#define CHECK_SYSCALL_OR_WARN(call, msg, arg) \
-  do { \
-    if ((call) == -1) { \
-      fputs(msg, stderr); \
-      perror(arg); \
-    } \
-  } while (0)
-
-#define COND_CHECK_SYSCALL_OR_WARN(var, value, call, msg, arg) \
-  do { \
-    if (var != value) { \
-      if ((call) == -1) { \
-        fputs(msg, stderr); \
-        perror(arg); \
-      } \
-    } \
+    if (var != value) \
+      CHECK(cond, alert, ;); \
     var = value; \
   } while (0)
-
-#define CHECK_OR_RETURN(rv, cond, msg) \
-  do { \
-    if (!(cond)) { \
-      fputs(msg, stderr); \
-      fputs("\n", stderr); \
-      return (rv); \
-    } \
-  } while (0)
-
-#define CHECK_OR_GOTO_WITH_MSG(label, rv, val, msg, cond) \
-  do { \
-    if (!(cond)) { \
-      if ((msg)) { \
-        fputs((msg), stderr); \
-        fputs("\n", stderr); \
-      } \
-      (rv) = (val); \
-      goto label; \
-    } \
-  } while (0)
-
-#define CHECK_OR_GOTO(label, rv, val, cond) \
-  CHECK_OR_GOTO_WITH_MSG(label, rv, val, NULL, cond)
-
-
-#define arraysize(arr) (sizeof(arr) / sizeof(arr[0]))

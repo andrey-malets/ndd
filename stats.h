@@ -13,6 +13,8 @@ struct stats {
   uint64_t consumer_slowdowns[MAX_CONSUMERS];
 };
 
+#define EMPTY_STATS {0, 0, 0, 0, {0}}
+
 #define INC(stats, counter) \
   do \
     if (stats) \

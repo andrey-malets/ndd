@@ -35,13 +35,32 @@ uint64_t min_offset(struct entry *index, size_t num_consumers) {
   return rv;
 }
 
-static bool change_wait(int epoll_fd, bool add,
-                        int fd, uint32_t events, void *ptr) {
-  struct epoll_event ev = { .events = events, .data.ptr = ptr };
-  CHECK(SYSCALL(epoll_ctl(epoll_fd, add ? EPOLL_CTL_ADD : EPOLL_CTL_DEL,
-                          fd, &ev)),
-        perror("epoll_ctl() failed"), DO_RETURN(false));
+static bool adjust_wait(int epoll_fd, struct entry *entry) {
+  if (entry->was_busy == entry->busy)
+    return true;
 
+  int fd;
+  uint32_t events;
+  int op = entry->busy ? EPOLL_CTL_ADD : EPOLL_CTL_DEL;
+
+  switch (entry->type) {
+  case P:
+    fd = CALL0(*entry->producer, get_fd);
+    events = CALL0(*entry->producer, get_epoll_event);
+    break;
+  case C:
+    fd = CALL0(*entry->consumer, get_fd);
+    events = CALL0(*entry->consumer, get_epoll_event);
+    break;
+  default:
+    assert(0);
+  }
+
+  struct epoll_event ev = { .events = events, .data.ptr = entry };
+  CHECK(SYSCALL(epoll_ctl(epoll_fd, op, fd, &ev)),
+        perror("epoll_ctl() failed"), return false);
+
+  entry->was_busy = entry->busy;
   return true;
 }
 
@@ -75,11 +94,14 @@ bool transfer(size_t buffer_size, size_t block_size,
   bool eof = false;
   size_t waiting = 0;
 
-  CHECK_SYSCALL_OR_GOTO(cleanup, rv, false, epoll_fd = epoll_create(1),
-                        "failed to create ", "epoll fd");
+#define FAIL_IF_NOT(cond, alert) \
+  CHECK(cond, alert, GOTO_WITH(cleanup, rv, false))
 
-  CHECK_OR_GOTO_WITH_MSG(cleanup, rv, false, "can't allocate memory for buffer",
-                         buffer = malloc(buffer_size));
+  FAIL_IF_NOT(SYSCALL(epoll_fd = epoll_create(1)),
+              perror("failed to create epoll fd"));
+
+  FAIL_IF_NOT(buffer = malloc(buffer_size),
+              ERROR("can't allocate memory for buffer"));
 
   prepare(state, index);
 
@@ -89,10 +111,9 @@ bool transfer(size_t buffer_size, size_t block_size,
     if (waiting) {
       INC(state->stats, waited_cycles);
       int num_events;
-      CHECK_SYSCALL_OR_GOTO(
-          cleanup, rv, false,
-          num_events = epoll_wait(epoll_fd, events, waiting, sleep_ms),
-          "epoll_wait ", "failed");
+      FAIL_IF_NOT(
+          SYSCALL(num_events = epoll_wait(epoll_fd, events, waiting, sleep_ms)),
+          perror("epoll_wait failed"));
       for (int i = 0; i != num_events; ++i) {
         struct entry *entry = events[i].data.ptr;
         assert(entry->busy);
@@ -108,7 +129,7 @@ bool transfer(size_t buffer_size, size_t block_size,
           assert(0);
           break;
         }
-        CHECK_OR_GOTO(cleanup, rv, false, moved != -1);
+        FAIL_IF_NOT(moved != -1, ;);
         entry->offset += moved;
         entry->busy = false;
         waiting -= 1;
@@ -141,10 +162,9 @@ bool transfer(size_t buffer_size, size_t block_size,
 
         if (size) {
           ssize_t produced;
-          CHECK_OR_GOTO(
-              cleanup, rv, false,
+          FAIL_IF_NOT(
               (produced = CALL(*index[0].producer, produce,
-                  buffer+offset, min(block_size, size), &eof)) != -1);
+                  buffer+offset, min(block_size, size), &eof)) != -1, ;);
 
           waiting += (index[0].busy = (produced == 0));
           index[0].offset += produced;
@@ -156,15 +176,7 @@ bool transfer(size_t buffer_size, size_t block_size,
           }
         }
 
-        if (index[0].was_busy != index[0].busy) {
-          CHECK(change_wait(epoll_fd, index[0].busy,
-                            CALL0(*index[0].producer, get_fd),
-                            CALL0(*index[0].producer, get_epoll_event),
-                            &index[0]),
-                ERROR("failed to change waits"),
-                DO_GOTO(cleanup, rv, false));
-          index[0].was_busy = index[0].busy;
-        }
+        FAIL_IF_NOT(adjust_wait(epoll_fd, &index[0]), ;);
       }
     }
 
@@ -192,10 +204,10 @@ bool transfer(size_t buffer_size, size_t block_size,
 
           if (size) {
             ssize_t consumed;
-            CHECK_OR_GOTO(
-                cleanup, rv, false,
+            FAIL_IF_NOT(
                 (consumed = CALL(*index[1+i].consumer, consume,
-                                 buffer+offset, min(block_size, size))) != -1);
+                                 buffer+offset,
+                                 min(block_size, size))) != -1, ;);
 
             waiting += (index[1+i].busy = (consumed == 0));
             index[1+i].offset += consumed;
@@ -203,23 +215,17 @@ bool transfer(size_t buffer_size, size_t block_size,
             INC(state->stats, buffer_underruns);
           }
 
-          if (index[1+i].was_busy != index[1+i].busy) {
-            CHECK(change_wait(epoll_fd, index[1+i].busy,
-                              CALL0(*index[1+i].consumer, get_fd),
-                              CALL0(*index[1+i].consumer, get_epoll_event),
-                              &index[1+i]),
-                  ERROR("failed to change waits "),
-                  DO_GOTO(cleanup, rv, false));
-            index[1+i].was_busy = index[1+i].busy;
-          }
+          FAIL_IF_NOT(adjust_wait(epoll_fd, &index[1+i]), ;);
         }
       }
     }
   }
 
+#undef FAIL_IF_NOT
+
 cleanup:
   free(buffer);
-  COND_CHECK_SYSCALL_OR_WARN(epoll_fd, -1, close(epoll_fd),
-                             "failed to close ", "epoll fd");
+  COND_CHECK(epoll_fd, -1, SYSCALL(close(epoll_fd)),
+             perror("failed to close epoll fd"));
   return rv;
 }

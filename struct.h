@@ -49,3 +49,5 @@ struct state {
   struct consumer consumers[MAX_CONSUMERS];
   struct stats *stats;
 };
+
+#define EMPTY_STATE {{0, 0}, 0, {{0, 0}}, NULL}

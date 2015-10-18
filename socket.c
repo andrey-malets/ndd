@@ -26,6 +26,8 @@ struct data {
   char host[];
 };
 
+#define WITH_THIS(act) PERROR1("failed to " act " for", this->filename)
+
 static bool refused(int rv) {
   return rv == -1 && errno == ECONNREFUSED;
 }
@@ -40,13 +42,15 @@ static int try_connect(int socket, struct addrinfo *ai, const char *host) {
 
     if (refused(rv))
       continue;
-    CHECK_SYSCALL_OR_WARN(
-        rv, "warning: connect() failed for one of addresses for ", host);
+    CHECK(SYSCALL(rv),
+          PERROR1("warning: connect() failed for one of addresses for", host),
+          ;);
     return rv;
   }
 
-  CHECK_SYSCALL_OR_WARN(
-      rv, "warning: connect() failed for one of addresses for ", host);
+  CHECK(
+      SYSCALL(rv),
+      PERROR1("warning: connect() failed for one of addresses for", host), ;);
   return rv;
 }
 
@@ -82,16 +86,15 @@ static bool init(void *data, size_t block_size) {
   struct addrinfo hints = get_hints(this->mode);
   struct addrinfo *result;
 
-  // TODO: check this shit error codes
-  CHECK_OR_RETURN(
-      false, getaddrinfo(strlen(this->host) ? this->host : NULL, this->port,
-                         &hints, &result) == 0,
-      "getaddrinfo() failed");
+  CHECK(getaddrinfo(strlen(this->host) ? this->host : NULL, this->port,
+                    &hints, &result) == 0,
+        GAI_PERROR1("getaddrinfo() failed for", this->host), return false);
 
   for (struct addrinfo *i = result; i != NULL; i = i->ai_next) {
-    CHECK_SYSCALL_OR_WARN(
-        this->sock = socket(i->ai_family, i->ai_socktype, i->ai_protocol),
-        "warning: socket() failed for one of addresses for ", this->host);
+    CHECK(SYSCALL(this->sock = socket(i->ai_family, i->ai_socktype,
+                                      i->ai_protocol)),
+          PERROR1("warning: socket() failed for one of addresses for",
+                  this->host), ;);
 
     if (this->sock == -1)
       continue;
@@ -103,14 +106,14 @@ static bool init(void *data, size_t block_size) {
         break;
       case S: {
         int reuse = 1;
-        CHECK_SYSCALL_OR_GOTO(
-            cleanup, retval, false,
-            setsockopt(this->sock, SOL_SOCKET, SO_REUSEADDR,
-                       &reuse, sizeof(reuse)),
-            "setsockopt(SO_REUSEADDR) failed for ", this->host);
-        CHECK_SYSCALL_OR_WARN(
-            rv = bind(this->sock, i->ai_addr, i->ai_addrlen),
-            "warning: bind() failed for one of addresses for ", this->host);
+        CHECK(SYSCALL(setsockopt(this->sock, SOL_SOCKET, SO_REUSEADDR,
+                                 &reuse, sizeof(reuse))),
+              PERROR1("setsockopt(SO_REUSEADDR) failed for", this->host),
+              goto end);
+        CHECK(SYSCALL(rv = bind(this->sock, i->ai_addr, i->ai_addrlen)),
+              PERROR1("warning: bind() failed for one of addresses for",
+                      this->host),
+              goto end);
         break;
       }
       default:
@@ -120,36 +123,34 @@ static bool init(void *data, size_t block_size) {
     if (rv != -1)
       break;
 
-    COND_CHECK_SYSCALL_OR_WARN(
-        this->sock, -1, close(this->sock),
-        "warning: close() failed for one of addresses for ", this->host);
+end:
+    COND_CHECK(this->sock, -1, SYSCALL(close(this->sock)),
+               PERROR1("warning: close() failed for one of addresses for",
+                       this->host));
   }
 
-  if (this->sock == -1) {
-    fprintf(stderr, "failed to initialize connection for %s\n", this->host);
-    retval = false;
-    goto cleanup;
-  }
+  CHECK(this->sock != -1,
+        fprintf(stderr, "failed to initialize connection for %s\n", this->host),
+        GOTO_WITH(cleanup, retval, false));
 
   if (this->mode == S) {
-    CHECK_SYSCALL_OR_GOTO(
-        cleanup, retval, false,
-        listen(this->sock, 1), "listen() failed for ", this->host);
+    CHECK(SYSCALL(listen(this->sock, 1)),
+          PERROR1("listen() failed for", this->host),
+          GOTO_WITH(cleanup, retval, false));
 
-    CHECK_SYSCALL_OR_GOTO(
-        cleanup, retval, false,
-        this->client_sock = accept(this->sock, NULL, NULL),
-        "accept() failed for ", this->host);
+    CHECK(SYSCALL(this->client_sock = accept(this->sock, NULL, NULL)),
+          PERROR1("accept() failed for", this->host),
+          GOTO_WITH(cleanup, retval, false));
   }
 
-  assert(block_size <= INT_MAX);
+  CHECK(block_size <= INT_MAX, ERROR("too big block size"), goto cleanup);
   const int optvalue = block_size;
-  CHECK_SYSCALL_OR_WARN(
-      setsockopt(this->mode == S ? this->client_sock : this->sock,
-                 SOL_SOCKET,
-                 this->mode == S ? SO_SNDBUFFORCE : SO_RCVBUFFORCE,
-                 &optvalue, sizeof(optvalue)),
-      "warning: setsockopt(*_BUFFORCE) failed for ", this->host);
+  CHECK(SYSCALL(setsockopt(this->mode == S ? this->client_sock : this->sock,
+                SOL_SOCKET,
+                this->mode == S ? SO_SNDBUFFORCE : SO_RCVBUFFORCE,
+                &optvalue, sizeof(optvalue))),
+        PERROR1("warning: setsockopt(*_BUFFORCE) failed for", this->host),
+        ;);
 
 cleanup:
   freeaddrinfo(result);
@@ -164,11 +165,12 @@ static const char *name(void *data) {
 static void destroy(void *data) {
   GET(struct data, this, data);
   if (this->mode == S)
-    COND_CHECK_SYSCALL_OR_WARN(
-        this->client_sock, -1, close(this->client_sock),
-        "failed to close client socket for ", this->host);
-  COND_CHECK_SYSCALL_OR_WARN(this->sock, -1, close(this->sock),
-                             "failed to close socket for ", this->host);
+    COND_CHECK(
+        this->client_sock, -1,
+        SYSCALL(close(this->client_sock)),
+        PERROR1("failed to close client socket for", this->host));
+  COND_CHECK(this->sock, -1, SYSCALL(close(this->sock)),
+             PERROR1("failed to close socket for", this->host));
   free(data);
 }
 
@@ -197,7 +199,7 @@ static ssize_t produce(void *data, void *buf, size_t count, bool *eof) {
     return 0;
   }
 
-  CHECK_SYSCALL_OR_RETURN(-1, rv, "recv() failed for ", this->host);
+  CHECK(SYSCALL(rv), PERROR1("recv() failed for", this->host), return -1);
   return rv;
 }
 
@@ -205,10 +207,11 @@ static ssize_t produce_signal(void *data, bool *eof) {
   GET(struct data, this, data);
   char unused;
   ssize_t rv = recv(this->sock, &unused, 1, MSG_PEEK);
-  CHECK_OR_RETURN(
-      -1, !would_block(rv),
-      "recv() blocked when after notification, shouldn't happen");
-  CHECK_SYSCALL_OR_RETURN(-1, rv, "recv(MSG_PEEK) failed for ", this->host);
+  CHECK(!would_block(rv),
+        ERROR("recv() blocked when after notification, shouldn't happen"),
+        return -1);
+  CHECK(SYSCALL(rv),
+        PERROR1("recv(MSG_PEEK) failed for", this->host), return -1);
   *eof = (rv == 0);
   return 0;
 }
@@ -223,7 +226,7 @@ static ssize_t consume(void *data, void *buf, size_t count) {
   if (would_block(rv))
     return 0;
 
-  CHECK_SYSCALL_OR_RETURN(-1, rv, "send() failed for ", this->host);
+  CHECK(SYSCALL(rv), PERROR1("send() failed for", this->host), return -1);
   return rv;
 }
 
