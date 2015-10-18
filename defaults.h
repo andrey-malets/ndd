@@ -5,3 +5,6 @@
 #define DEFAULT_SLEEP_MS 1
 
 #define MAX_CONSUMERS 2
+
+#define DEFAULT_PORT "3634"
+static const unsigned int CONNECT_BACKOFF[] = {0, 1, 3, 5};

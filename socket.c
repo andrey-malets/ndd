@@ -1,3 +1,4 @@
+#include "defaults.h"
 #include "macro.h"
 #include "socket.h"
 #include "struct.h"
@@ -14,10 +15,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#define DEFAULT_PORT "3634"
 #define PORT_MAX_CHARS 5
-
-static const unsigned int CONNECT_BACKOFF[] = {0, 1, 3, 5};
 
 struct data {
   int sock;
