@@ -75,7 +75,7 @@ def get_slave_cmd(args, spec):
     return cmd
 
 def get_srun_cmd(args):
-    SRUN = ['srun', '-D', '/', '-K']
+    SRUN = ['srun', '-D', '/', '-K', '-q']
     slaves = get_idle_nodes(args.d)
     spec = ','.join(slaves)
     cmd = SRUN + \
