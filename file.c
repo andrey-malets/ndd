@@ -3,6 +3,7 @@
 #include "struct.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/aio_abi.h>
 #include <stdio.h>
@@ -111,6 +112,11 @@ static ssize_t signal(void *data, bool *eof) {
   struct io_event event;
   CHECK(SYSCALL(syscall(SYS_io_getevents, this->ctx, 1, 1, &event, NULL)),
         WITH_THIS("get completed aio events"), return -1);
+
+  if (event.res < 0) {
+    errno = -event.res;
+    CHECK(SYSCALL(-1), WITH_THIS("complete aio events"), return -1);
+  }
 
   this->offset += event.res;
   *eof = (event.res == 0);
