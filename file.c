@@ -115,7 +115,7 @@ static ssize_t signal(void *data, bool *eof) {
 
   if (event.res < 0) {
     errno = -event.res;
-    CHECK(SYSCALL(-1), WITH_THIS("complete aio events"), return -1);
+    CHECK(SYSCALL(-1), WITH_THIS("complete aio requests"), return -1);
   }
 
   this->offset += event.res;
