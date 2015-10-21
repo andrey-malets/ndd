@@ -109,7 +109,7 @@ static ssize_t consume(void *data, void *buf, size_t count) {
 static ssize_t signal(void *data, bool *eof) {
   GET(struct data, this, data);
 
-  struct io_event event;
+  struct io_event event = {0};
   CHECK(SYSCALL(syscall(SYS_io_getevents, this->ctx, 1, 1, &event, NULL)),
         WITH_THIS("get completed aio events"), return -1);
 
