@@ -160,19 +160,21 @@ bool transfer(size_t buffer_size, size_t block_size,
           size = buffer_size - sbegin;
         }
 
-        if (size) {
-          ssize_t produced;
-          FAIL_IF_NOT(
-              (produced = CALL(*index[0].producer, produce,
-                  buffer+offset, min(block_size, size), &eof)) != -1, ;);
+        if (!eof) {
+          if (size) {
+            ssize_t produced;
+            FAIL_IF_NOT(
+                (produced = CALL(*index[0].producer, produce,
+                    buffer+offset, min(block_size, size), &eof)) != -1, ;);
 
-          waiting += (index[0].busy = (produced == 0));
-          index[0].offset += produced;
-        } else {
-          INC(state->stats, buffer_overruns);
-          for (size_t i = 0; i != state->num_consumers; ++i) {
-            if (index[1+i].offset == end)
-              INC(state->stats, consumer_slowdowns[i]);
+            waiting += (index[0].busy = (produced == 0));
+            index[0].offset += produced;
+          } else {
+            INC(state->stats, buffer_overruns);
+            for (size_t i = 0; i != state->num_consumers; ++i) {
+              if (index[1+i].offset == end)
+                INC(state->stats, consumer_slowdowns[i]);
+            }
           }
         }
 
