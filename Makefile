@@ -20,4 +20,4 @@ endif
 
 .PHONY: clean
 clean:
-	rm -f *.o $(OUTPUT)
+	rm -f *.o $(OUTPUT.$(PLATFORM))
