@@ -20,4 +20,4 @@ endif
 
 .PHONY: clean
 clean:
-	rm -f *.o ndd ndd32
+	rm -f *.o $(OUTPUT)
