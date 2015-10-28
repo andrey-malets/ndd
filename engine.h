@@ -4,5 +4,4 @@
 #include "stddef.h"
 
 struct state;
-bool transfer(size_t buffer_size, size_t block_size,
-              int sleep_us, struct state *const state);
+bool transfer(size_t buffer_size, size_t block_size, struct state *const state);

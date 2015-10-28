@@ -59,8 +59,6 @@ int main(int argc, char *argv[]) {
 
   size_t buffer_size = DEFAULT_BUFFER_SIZE;
   size_t block_size = DEFAULT_BLOCK_SIZE;
-  long sleep_ms = DEFAULT_SLEEP_MS;
-
   size_t raw_size;
   static_assert(sizeof(size_t) == sizeof(long long) ||
                 sizeof(size_t) == sizeof(long),
@@ -99,16 +97,6 @@ int main(int argc, char *argv[]) {
       stats_filename = optarg;
       state.stats = &stats;
       break;
-    case 't': {
-      char *end = NULL;
-      long raw_sleep;
-      raw_sleep = strtol(optarg, &end, 10);
-      FAIL_IF_NOT(*end == 0 && raw_sleep >= 0l && !strtol_overflew(raw_sleep) &&
-                      raw_sleep < INT_MAX,
-                  ERROR("can't read sleep timeout"));
-      sleep_ms = raw_sleep;
-      break;
-    }
     }
   }
 
@@ -129,7 +117,7 @@ int main(int argc, char *argv[]) {
   FAIL_IF_NOT(CALL(state.producer, init, block_size),
               ERROR("failed to initialize producer"));
 
-  FAIL_IF_NOT(transfer(buffer_size, block_size, sleep_ms, &state),
+  FAIL_IF_NOT(transfer(buffer_size, block_size, &state),
               ERROR("transfer failed"));
 
   if (stats_filename)

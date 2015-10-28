@@ -85,7 +85,7 @@ static void prepare(struct state *const state, struct entry *const index) {
 }
 
 bool transfer(size_t buffer_size, size_t block_size,
-              int sleep_ms, struct state *const state) {
+              struct state *const state) {
   bool rv = true;
   struct entry index[1+MAX_CONSUMERS];
   struct epoll_event events[1+MAX_CONSUMERS];
@@ -112,7 +112,7 @@ bool transfer(size_t buffer_size, size_t block_size,
       INC(state->stats, waited_cycles);
       int num_events;
       FAIL_IF_NOT(
-          SYSCALL(num_events = epoll_wait(epoll_fd, events, waiting, sleep_ms)),
+          SYSCALL(num_events = epoll_wait(epoll_fd, events, waiting, -1)),
           perror("epoll_wait failed"));
       for (int i = 0; i != num_events; ++i) {
         struct entry *entry = events[i].data.ptr;
