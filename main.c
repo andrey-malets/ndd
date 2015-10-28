@@ -43,6 +43,12 @@ static bool strtol_overflew(long value) {
   return (value == LONG_MIN || value == LONG_MAX) && errno == ERANGE;
 }
 
+static bool size_overflew(size_t value) {
+  return sizeof(size_t) == sizeof(long) ?
+      strtol_overflew(value) :
+      strtoll_overflew(value);
+}
+
 int main(int argc, char *argv[]) {
   int rv = 0;
 
@@ -55,8 +61,9 @@ int main(int argc, char *argv[]) {
   size_t block_size = DEFAULT_BLOCK_SIZE;
   long sleep_ms = DEFAULT_SLEEP_MS;
 
-  long long raw_size;
-  static_assert(sizeof(size_t) == sizeof(long long),
+  size_t raw_size;
+  static_assert(sizeof(size_t) == sizeof(long long) ||
+                sizeof(size_t) == sizeof(long),
                 "can't manipulate buffer sizes on this platform");
 
 #define FAIL_IF_NOT(cond, alert) CHECK(cond, alert, GOTO_WITH(cleanup, rv, 1))
@@ -66,8 +73,10 @@ int main(int argc, char *argv[]) {
     case 'B':
     case 'b': {
       char *end = NULL;
-      raw_size = strtoll(optarg, &end, 10);
-      FAIL_IF_NOT(*end == 0 && raw_size > 0ll && !strtoll_overflew(raw_size),
+      raw_size = (sizeof(size_t) == sizeof(long)) ?
+          strtol(optarg, &end, 10) :
+          strtoll(optarg, &end, 10);
+      FAIL_IF_NOT(*end == 0 && raw_size > 0ll && !size_overflew(raw_size),
                   ERROR("can't read buffer/block size"));
       (opt == 'B') ? (buffer_size = raw_size) : (block_size = raw_size);
       break;
