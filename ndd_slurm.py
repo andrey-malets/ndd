@@ -5,12 +5,6 @@ import os
 import sys
 import subprocess
 
-def get_idle_nodes(partition):
-    assert partition
-    res = subprocess.check_output(
-        ['sinfo', '-p', partition, '-t', 'idle', '-h', '-o' '%n'])
-    return res.strip().split('\n')
-
 def add_non_required_options(parser):
     parser.add_argument('-B', metavar='BUFFER', help='buffer size')
     parser.add_argument('-b', metavar='BLOCK', help='block size')
@@ -36,7 +30,9 @@ def add_master_options(parser):
     parser.add_argument(
         '-i', metavar='INPUT', help='input file on source', required=True)
     parser.add_argument(
-        '-d', metavar='DEST', help='destination partition', required=True)
+        '-D', metavar='PARTITION', help='destination partition')
+    parser.add_argument(
+        '-d', metavar='DEST', help='destination machine(s)', action='append')
 
 def add_slave_options(parser):
     add_common_options(parser)
@@ -73,6 +69,20 @@ def get_slave_cmd(args, spec):
            '-S', spec, '-s', args.s, '-o', args.o, '-p', args.p]
     put_non_required_options(args, cmd)
     return cmd
+
+def get_slaves(args):
+    if args.D:
+        return get_idle_nodes(args.D)
+    elif args.d:
+        return args.d
+    else:
+        raise ValueError('one if -D or -d must be specified')
+
+def get_idle_nodes(partition):
+    assert partition
+    res = subprocess.check_output(
+        ['sinfo', '-p', partition, '-t', 'idle', '-h', '-o' '%n'])
+    return res.strip().split('\n')
 
 def get_srun_cmd(args):
     SRUN = ['srun', '-D', '/', '-K', '-q']
