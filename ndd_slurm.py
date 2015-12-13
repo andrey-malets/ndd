@@ -71,9 +71,9 @@ def get_slave_cmd(args, spec):
     return cmd
 
 def get_slaves(args):
-    if args.D:
+    if args.D is not None:
         return get_idle_nodes(args.D)
-    elif args.d:
+    elif args.d is not None:
         return args.d
     else:
         raise ValueError('one if -D or -d must be specified')
