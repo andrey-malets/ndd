@@ -77,7 +77,6 @@ def get_idle_nodes(partition):
     return res.strip().split('\n')
 
 def get_slaves(args):
-    print args.D
     if args.D is not None:
         return get_idle_nodes(args.D)
     elif args.d is not None:
