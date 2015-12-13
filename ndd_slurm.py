@@ -70,7 +70,14 @@ def get_slave_cmd(args, spec):
     put_non_required_options(args, cmd)
     return cmd
 
+def get_idle_nodes(partition):
+    assert partition
+    res = subprocess.check_output(
+        ['sinfo', '-p', partition, '-t', 'idle', '-h', '-o' '%n'])
+    return res.strip().split('\n')
+
 def get_slaves(args):
+    print args.D
     if args.D is not None:
         return get_idle_nodes(args.D)
     elif args.d is not None:
@@ -78,15 +85,9 @@ def get_slaves(args):
     else:
         raise ValueError('one if -D or -d must be specified')
 
-def get_idle_nodes(partition):
-    assert partition
-    res = subprocess.check_output(
-        ['sinfo', '-p', partition, '-t', 'idle', '-h', '-o' '%n'])
-    return res.strip().split('\n')
-
 def get_srun_cmd(args):
     SRUN = ['srun', '-D', '/', '-K', '-q']
-    slaves = get_idle_nodes(args.d)
+    slaves = get_slaves(args)
     spec = ','.join(slaves)
     cmd = SRUN + \
         ['-N', str(len(slaves)), '-w', spec] + \
