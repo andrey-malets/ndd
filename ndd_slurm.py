@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 import subprocess
+import socket
 
 def add_non_required_options(parser):
     parser.add_argument('-B', metavar='BUFFER', help='buffer size')
@@ -56,16 +57,23 @@ def get_master_ndd_cmd(args):
 def get_slave_ndd_cmd(args, env):
     cmd = ['ndd', '-o', args.o]
     slaves = args.S.split(',')
-    index = int(env.get('SLURM_NODEID'))
+    try:
+        current_host = socket.gethostname()
+        index = slaves.index(current_host)
+    except ValueError:
+        raise ValueError('bad hostname: {}'.format(current_host))
     source = args.s if index == 0 else slaves[index-1]
     cmd += ['-r', '{}:{}'.format(source, args.p)]
     if index != len(slaves) - 1:
-        cmd += ['-s', '{}:{}'.format(slaves[index], args.p)]
+        current_slave = slaves[index]
+        cmd += ['-s', '{}:{}'.format(current_slave, args.p)]
+    else:
+        current_slave = None
     put_non_required_options(args, cmd)
     return cmd
 
 def get_slave_cmd(args, spec):
-    cmd = [os.path.basename(__file__),
+    cmd = [os.path.abspath(__file__),
            '-S', spec, '-s', args.s, '-o', args.o, '-p', args.p]
     put_non_required_options(args, cmd)
     return cmd
