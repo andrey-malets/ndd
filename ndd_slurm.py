@@ -59,13 +59,15 @@ def get_slave_ndd_cmd(args, env):
     cmd = ['ndd', '-o', args.o]
     slaves = args.S.split(',')
     current_host = socket.gethostname()
-    try:
+    if current_host in slaves:
         index = slaves.index(current_host)
-    except ValueError:
+    else:
         try:
-            prefix_occurrence = [x for x in slaves if current_host.startswith(x)][0]
+            prefix_occurrence =
+                [x for x in slaves if current_host.startswith(x)][0]
             index = slaves.index(prefix_occurrence)
-            warnings.warn('bad hostname: {}, using {}'.format(current_host, prefix_occurrence))
+            warnings.warn('bad hostname: {}, using {}'.format(current_host,
+                                                       prefix_occurrence))
         except IndexError:
             raise IndexError('{} is not in slaves list'.format(current_host))
     source = args.s if index == 0 else slaves[index-1]
