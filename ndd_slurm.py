@@ -5,6 +5,7 @@ import os
 import sys
 import subprocess
 import socket
+import warnings
 
 def add_non_required_options(parser):
     parser.add_argument('-B', metavar='BUFFER', help='buffer size')
@@ -57,11 +58,16 @@ def get_master_ndd_cmd(args):
 def get_slave_ndd_cmd(args, env):
     cmd = ['ndd', '-o', args.o]
     slaves = args.S.split(',')
+    current_host = socket.gethostname()
     try:
-        current_host = socket.gethostname()
         index = slaves.index(current_host)
     except ValueError:
-        raise ValueError('bad hostname: {}'.format(current_host))
+        try:
+            prefix_occurrence = [x for x in slaves if current_host.startswith(x)][0]
+            index = slaves.index(prefix_occurrence)
+            warnings.warn('bad hostname: {}, using {}'.format(current_host, prefix_occurrence))
+        except IndexError:
+            raise IndexError('{} is not in slaves list'.format(current_host))
     source = args.s if index == 0 else slaves[index-1]
     cmd += ['-r', '{}:{}'.format(source, args.p)]
     if index != len(slaves) - 1:
