@@ -2,9 +2,9 @@
 
 import argparse
 import os
-import sys
-import subprocess
 import socket
+import subprocess
+import sys
 import warnings
 
 def add_non_required_options(parser):
