@@ -62,13 +62,12 @@ def get_slave_ndd_cmd(args, env):
     if current_host in slaves:
         index = slaves.index(current_host)
     else:
-        try:
-            prefix_occurrence =
-                [x for x in slaves if current_host.startswith(x)][0]
-            index = slaves.index(prefix_occurrence)
-            warnings.warn('bad hostname: {}, using {}'.format(current_host,
-                                                       prefix_occurrence))
-        except IndexError:
+        prefix_occurrences =\
+            [x for x in slaves if current_host.startswith(x)]
+        if len(prefix_occurrences) == 1:
+            index = slaves.index(prefix_occurrences[0])
+            warnings.warn('matching by prefix: {}'.format(prefix_occurrences[0]))
+        else:
             raise IndexError('{} is not in slaves list'.format(current_host))
     source = args.s if index == 0 else slaves[index-1]
     cmd += ['-r', '{}:{}'.format(source, args.p)]
