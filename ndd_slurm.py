@@ -8,6 +8,7 @@ import sys
 import warnings
 
 def add_non_required_options(parser):
+    parser.add_argument('-n', metavar='NDD', help='path to ndd', default='ndd')
     parser.add_argument('-B', metavar='BUFFER', help='buffer size')
     parser.add_argument('-b', metavar='BLOCK', help='block size')
     parser.add_argument('-t', metavar='TIMEOUT', help='epoll_wait() timeout')
@@ -51,12 +52,12 @@ def get_slave_parser():
     return parser
 
 def get_master_ndd_cmd(args):
-    cmd = ['ndd', '-i', args.i, '-s', '{}:{}'.format(args.s, args.p)]
+    cmd = [args.n, '-i', args.i, '-s', '{}:{}'.format(args.s, args.p)]
     put_non_required_options(args, cmd)
     return cmd
 
 def get_slave_ndd_cmd(args, env):
-    cmd = ['ndd', '-o', args.o]
+    cmd = [args.n, '-o', args.o]
     slaves = args.S.split(',')
     current_host = socket.gethostname()
     if current_host in slaves:
@@ -66,7 +67,8 @@ def get_slave_ndd_cmd(args, env):
             [x for x in slaves if current_host.startswith(x)]
         if len(prefix_occurrences) == 1:
             index = slaves.index(prefix_occurrences[0])
-            warnings.warn('matching by prefix: {}'.format(prefix_occurrences[0]))
+            warnings.warn(
+                'matching by prefix: {}'.format(prefix_occurrences[0]))
         else:
             raise IndexError('{} is not in slaves list'.format(current_host))
     source = args.s if index == 0 else slaves[index-1]
@@ -80,8 +82,8 @@ def get_slave_ndd_cmd(args, env):
     return cmd
 
 def get_slave_cmd(args, spec):
-    cmd = [os.path.abspath(__file__),
-           '-S', spec, '-s', args.s, '-o', args.o, '-p', args.p]
+    cmd = [sys.executable, os.path.abspath(__file__),
+           '-S', spec, '-n', args.n, '-s', args.s, '-o', args.o, '-p', args.p]
     put_non_required_options(args, cmd)
     return cmd
 
