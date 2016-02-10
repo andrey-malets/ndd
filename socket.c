@@ -184,6 +184,10 @@ static bool would_block(int rv) {
   return rv == -1 && (errno == EAGAIN || errno == EWOULDBLOCK);
 }
 
+static size_t get_lo_watermark(void *data) {
+  return 0;
+}
+
 static ssize_t produce(void *data, void *buf, size_t count, bool *eof) {
   GET(struct data, this, data);
   ssize_t rv = recv(this->sock, buf, count, MSG_DONTWAIT);
@@ -244,6 +248,7 @@ static const struct consumer_ops send_ops = {
 
   .get_epoll_event  = get_epoll_event,
   .get_fd           = get_fd,
+  .get_lo_watermark = get_lo_watermark,
   .consume          = consume,
   .signal           = consume_signal,
 };
@@ -282,7 +287,7 @@ struct producer get_socket_reader(const char *spec) {
   return (struct producer) {&recv_ops, construct(spec, R)};
 }
 
-struct consumer get_socket_writer(const char *spec) {
+struct consumer get_socket_writer(const char *spec, size_t lo_watermark) {
   return (struct consumer) {&send_ops, construct(spec, S)};
 }
 

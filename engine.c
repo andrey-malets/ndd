@@ -193,7 +193,9 @@ bool transfer(size_t buffer_size, size_t block_size,
           uint64_t send = end % buffer_size;
 
           uint64_t offset = 0, size = 0;
+          bool clip = true;
           if (sbegin > send) {
+            clip = false;
             offset = send;
             size = sbegin - send;
           } else if (sbegin < send) {
@@ -205,14 +207,17 @@ bool transfer(size_t buffer_size, size_t block_size,
           }
 
           if (size) {
-            ssize_t consumed;
-            FAIL_IF_NOT(
-                (consumed = CALL(*index[1+i].consumer, consume,
-                                 buffer+offset,
-                                 min(block_size, size))) != -1, ;);
+            if (eof || clip ||
+                size >= CALL0(*index[1+i].consumer, get_lo_watermark)) {
+              ssize_t consumed;
+              FAIL_IF_NOT(
+                  (consumed = CALL(*index[1+i].consumer, consume,
+                                   buffer+offset,
+                                   min(block_size, size))) != -1, ;);
 
-            waiting += (index[1+i].busy = (consumed == 0));
-            index[1+i].offset += consumed;
+              waiting += (index[1+i].busy = (consumed == 0));
+              index[1+i].offset += consumed;
+            }
           } else {
             INC(state->stats, buffer_underruns);
           }

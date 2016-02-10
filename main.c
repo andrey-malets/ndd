@@ -25,11 +25,12 @@ static bool init_producer(struct producer *producer,
 }
 
 static bool add_consumer(struct consumer *consumers, size_t *num_consumers,
-                         struct consumer (*fn)(const char*), const char *arg) {
+                         struct consumer (*fn)(const char*, size_t),
+                         size_t lo_watermark, const char *arg) {
   CHECK(*num_consumers != MAX_CONSUMERS,
         ERROR("too many consumers"), return false);
 
-  consumers[(*num_consumers)++] = fn(arg);
+  consumers[(*num_consumers)++] = fn(arg, lo_watermark);
   CHECK(!is_empty_consumer(&consumers[*num_consumers-1]),
         ERROR("failed to construct consumer"), return false);
   return true;
@@ -59,6 +60,7 @@ int main(int argc, char *argv[]) {
 
   size_t buffer_size = DEFAULT_BUFFER_SIZE;
   size_t block_size = DEFAULT_BLOCK_SIZE;
+  size_t lo_watermark = DEFAULT_LO_WATERMARK;
   size_t raw_size;
   static_assert(sizeof(size_t) == sizeof(long long) ||
                 sizeof(size_t) == sizeof(long),
@@ -84,14 +86,14 @@ int main(int argc, char *argv[]) {
       break;
     case 'o':
       FAIL_IF_NOT(add_consumer(state.consumers, &state.num_consumers,
-                               get_file_writer, optarg), ;);
+                               get_file_writer, lo_watermark, optarg), ;);
       break;
     case 'r':
       FAIL_IF_NOT(init_producer(&state.producer, get_socket_reader, optarg), ;);
       break;
     case 's':
       FAIL_IF_NOT(add_consumer(state.consumers, &state.num_consumers,
-                               get_socket_writer, optarg), ;);
+                               get_socket_writer, lo_watermark, optarg), ;);
       break;
     case 'S':
       stats_filename = optarg;
@@ -104,6 +106,8 @@ int main(int argc, char *argv[]) {
               ERROR("buffer size should be greather than block size"));
   FAIL_IF_NOT(buffer_size % block_size == 0,
               ERROR("buffer size should be a multiple of block size"));
+  FAIL_IF_NOT(lo_watermark <= block_size,
+              ERROR("lo watermark must not be greather than block size"));
 
   FAIL_IF_NOT(!is_empty_producer(&state.producer),
               ERROR("please specify a producer"));

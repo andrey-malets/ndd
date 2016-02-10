@@ -30,6 +30,7 @@ struct consumer_ops {
 
   METHOD0(uint32_t, get_epoll_event);
   METHOD0(int, get_fd);
+  METHOD0(size_t, get_lo_watermark);
   METHOD(ssize_t, consume, void *buf, size_t count);
   METHOD0(ssize_t, signal);
 };

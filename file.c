@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 struct data {
+  size_t lo_watermark;
   int fd;
   int afd;
   aio_context_t ctx;
@@ -101,6 +102,11 @@ static ssize_t enqueue(void *data, void *buf, size_t count, bool *eof) {
   return 0;
 }
 
+static size_t get_lo_watermark(void *data) {
+  GET(struct data, this, data);
+  return this->lo_watermark;
+}
+
 static ssize_t consume(void *data, void *buf, size_t count) {
   bool unused;
   return enqueue(data, buf, count, &unused);
@@ -146,15 +152,18 @@ static const struct consumer_ops output_ops = {
 
   .get_epoll_event  = get_epoll_event,
   .get_fd           = get_fd,
+  .get_lo_watermark = get_lo_watermark,
   .consume          = consume,
   .signal           = consume_signal,
 };
 
-static struct data *construct(const char *filename, int mode) {
+static struct data *construct(const char *filename, int mode,
+                              size_t lo_watermark) {
   assert(filename);
   struct data *data = malloc(sizeof(struct data) + strlen(filename) + 1);
 
   if (data) {
+    data->lo_watermark = lo_watermark;
     data->fd = -1;
     data->afd = -1;
     data->ctx = 0;
@@ -169,11 +178,11 @@ static struct data *construct(const char *filename, int mode) {
 }
 
 struct producer get_file_reader(const char *filename) {
-  return (struct producer) {&input_ops, construct(filename, R)};
+  return (struct producer) {&input_ops, construct(filename, R, 0)};
 }
 
-struct consumer get_file_writer(const char *filename) {
-  return (struct consumer) {&output_ops, construct(filename, W)};
+struct consumer get_file_writer(const char *filename, size_t lo_watermark) {
+  return (struct consumer) {&output_ops, construct(filename, W, lo_watermark)};
 }
 
 #undef WITH_THIS
