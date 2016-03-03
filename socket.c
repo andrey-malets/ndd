@@ -180,12 +180,12 @@ static int get_fd(void *data) {
   return (this->mode == R) ? this->sock : this->client_sock;
 }
 
-static bool would_block(int rv) {
-  return rv == -1 && (errno == EAGAIN || errno == EWOULDBLOCK);
-}
-
 static size_t get_lo_watermark(void *data) {
   return 0;
+}
+
+static bool would_block(int rv) {
+  return rv == -1 && (errno == EAGAIN || errno == EWOULDBLOCK);
 }
 
 static ssize_t produce(void *data, void *buf, size_t count, bool *eof) {

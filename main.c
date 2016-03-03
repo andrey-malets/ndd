@@ -2,6 +2,7 @@
 #include "engine.h"
 #include "file.h"
 #include "macro.h"
+#include "pipe.h"
 #include "socket.h"
 #include "stats.h"
 #include "struct.h"
@@ -68,7 +69,7 @@ int main(int argc, char *argv[]) {
 
 #define FAIL_IF_NOT(cond, alert) CHECK(cond, alert, GOTO_WITH(cleanup, rv, 1))
 
-  for (int opt; (opt = getopt(argc, argv, "B:b:i:o:r:s:S:t:")) != -1;) {
+  for (int opt; (opt = getopt(argc, argv, "B:b:i:o:I:O:r:s:S:t:")) != -1;) {
     switch (opt) {
     case 'B':
     case 'b': {
@@ -87,6 +88,13 @@ int main(int argc, char *argv[]) {
     case 'o':
       FAIL_IF_NOT(add_consumer(state.consumers, &state.num_consumers,
                                get_file_writer, lo_watermark, optarg), ;);
+      break;
+    case 'I':
+      FAIL_IF_NOT(init_producer(&state.producer, get_pipe_reader, optarg), ;);
+      break;
+    case 'O':
+      FAIL_IF_NOT(add_consumer(state.consumers, &state.num_consumers,
+                               get_pipe_writer, lo_watermark, optarg), ;);
       break;
     case 'r':
       FAIL_IF_NOT(init_producer(&state.producer, get_socket_reader, optarg), ;);
