@@ -11,7 +11,9 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 struct data {
@@ -34,6 +36,14 @@ static bool init(void *data, size_t block_size) {
   mode |= (O_NONBLOCK | O_LARGEFILE);
   CHECK(SYSCALL(this->fd = open(this->filename, mode, S_IWUSR|S_IRUSR)),
         WITH_THIS("call open"), return false);
+
+  struct stat stat;
+  CHECK(SYSCALL(fstat(this->fd, &stat)), WITH_THIS("call fstat"),
+        return false);
+  CHECK(S_ISREG(stat.st_mode) || S_ISBLK(stat.st_mode),
+        fprintf(stderr, "%s is neither a regular file nor a block device\n",
+                this->filename),
+        return false);
 
   CHECK(SYSCALL(this->afd = eventfd(0, 0)),
         WITH_THIS("initialize eventfd"), return false);
