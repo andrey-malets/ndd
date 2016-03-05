@@ -2,6 +2,7 @@
 #include "macro.h"
 #include "socket.h"
 #include "struct.h"
+#include "util.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -180,14 +181,6 @@ static int get_fd(void *data) {
   return (this->mode == R) ? this->sock : this->client_sock;
 }
 
-static size_t get_lo_watermark(void *data) {
-  return 0;
-}
-
-static bool would_block(int rv) {
-  return rv == -1 && (errno == EAGAIN || errno == EWOULDBLOCK);
-}
-
 static ssize_t produce(void *data, void *buf, size_t count, bool *eof) {
   GET(struct data, this, data);
   ssize_t rv = recv(this->sock, buf, count, MSG_DONTWAIT);
@@ -213,10 +206,6 @@ static ssize_t produce_signal(void *data, bool *eof) {
   CHECK(SYSCALL(rv),
         PERROR1("recv(MSG_PEEK) failed for", this->host), return -1);
   *eof = (rv == 0);
-  return 0;
-}
-
-static ssize_t consume_signal(void *data) {
   return 0;
 }
 
@@ -248,9 +237,9 @@ static const struct consumer_ops send_ops = {
 
   .get_epoll_event  = get_epoll_event,
   .get_fd           = get_fd,
-  .get_lo_watermark = get_lo_watermark,
+  .get_lo_watermark = get_zero_lo_watermark,
   .consume          = consume,
-  .signal           = consume_signal,
+  .signal           = zero_consume_signal,
 };
 
 static struct data *construct(const char *spec, int mode) {

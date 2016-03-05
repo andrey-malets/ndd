@@ -12,7 +12,8 @@ CFLAGS.release = -O2
 
 CFLAGS=${CFLAGS.common} ${CFLAGS.${BUILD}} ${CFLAGS.${PLATFORM}}
 
-${OUTPUT.${PLATFORM}}: main.o file.o pipe.o socket.o stats.o struct.o engine.o
+${OUTPUT.${PLATFORM}}: main.o file.o pipe.o socket.o stats.o struct.o \
+					   engine.o util.o
 	$(CC) $(CFLAGS) -o $@ $^
 ifeq ($(BUILD), release)
 	strip $@

@@ -82,31 +82,22 @@ int main(int argc, char *argv[]) {
       (opt == 'B') ? (buffer_size = raw_size) : (block_size = raw_size);
       break;
     }
-    case 'i':
-      FAIL_IF_NOT(init_producer(&state.producer, get_file_reader, optarg), ;);
-      break;
-    case 'o':
-      FAIL_IF_NOT(add_consumer(state.consumers, &state.num_consumers,
-                               get_file_writer, lo_watermark, optarg), ;);
-      break;
-    case 'I':
-      FAIL_IF_NOT(init_producer(&state.producer, get_pipe_reader, optarg), ;);
-      break;
-    case 'O':
-      FAIL_IF_NOT(add_consumer(state.consumers, &state.num_consumers,
-                               get_pipe_writer, lo_watermark, optarg), ;);
-      break;
-    case 'r':
-      FAIL_IF_NOT(init_producer(&state.producer, get_socket_reader, optarg), ;);
-      break;
-    case 's':
-      FAIL_IF_NOT(add_consumer(state.consumers, &state.num_consumers,
-                               get_socket_writer, lo_watermark, optarg), ;);
-      break;
     case 'S':
       stats_filename = optarg;
       state.stats = &stats;
       break;
+#define PRODUCER(letter, func) \
+    case letter: \
+      FAIL_IF_NOT(init_producer(&state.producer, func, optarg), ;); \
+      break
+#define CONSUMER(letter, func) \
+    case letter: \
+      FAIL_IF_NOT(add_consumer(state.consumers, &state.num_consumers, \
+                               func, lo_watermark, optarg), ;); \
+      break
+    PRODUCER('i', get_file_reader);   CONSUMER('o', get_file_writer);
+    PRODUCER('I', get_pipe_reader);   CONSUMER('O', get_pipe_writer);
+    PRODUCER('r', get_socket_reader); CONSUMER('s', get_socket_writer);
     }
   }
 
