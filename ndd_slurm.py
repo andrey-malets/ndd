@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import warnings
 
 def add_non_required_options(parser):
@@ -36,10 +37,13 @@ def add_master_options(parser):
         '-D', metavar='PARTITION', help='destination partition')
     parser.add_argument(
         '-d', metavar='DEST', help='destination machine(s)', action='append')
+    parser.add_argument(
+        '-H', action='store_true', help='use ssh, not SLURM')
 
 def add_slave_options(parser):
     add_common_options(parser)
     parser.add_argument('-S', metavar='SLAVE_SPEC', help='slaves configuration')
+    parser.add_argument('-H', action='store_true', help='use ssh, not SLURM')
 
 def get_master_parser():
     parser = argparse.ArgumentParser('run ndd with SLURM')
@@ -87,6 +91,10 @@ def get_slave_cmd(args, spec):
     put_non_required_options(args, cmd)
     return cmd
 
+def get_ssh_slave_cmd(args, spec):
+    cmd = get_slave_cmd(args, spec)
+    return cmd
+
 def get_idle_nodes(partition):
     assert partition
     res = subprocess.check_output(
@@ -99,7 +107,7 @@ def get_slaves(args):
     elif args.d is not None:
         return args.d
     else:
-        raise ValueError('one if -D or -d must be specified')
+        raise ValueError('one of -D or -d must be specified')
 
 def get_srun_cmd(args):
     SRUN = ['srun', '-D', '/', '-K', '-q']
@@ -109,6 +117,14 @@ def get_srun_cmd(args):
         ['-N', str(len(slaves)), '-w', spec] + \
         get_slave_cmd(args, spec)
     return cmd
+
+def get_ssh_slave_cmds(args):
+    SSH = ['ssh', '-o', 'PasswordAuthentication=no']
+    spec = ','.join(get_slaves(args))
+    slaves = spec.split(',')
+    slave_cmd = ' '.join(get_ssh_slave_cmd(args, spec))
+    cmds = [(SSH + [slave] + [slave_cmd]) for slave in slaves]
+    return cmds
 
 def wait(procs):
     def kill():
@@ -135,6 +151,11 @@ def run_master(args):
     procs = {proc.pid: proc for proc in map(subprocess.Popen, cmds)}
     return wait(procs)
 
+def run_ssh_master(args):
+    cmds = [get_master_ndd_cmd(args)] + get_ssh_slave_cmds(args)
+    procs = {proc.pid: proc for proc in map(subprocess.Popen, cmds)}
+    return wait(procs)
+
 def run_slave(args, env):
     return subprocess.call(get_slave_ndd_cmd(args, env))
 
@@ -142,7 +163,10 @@ def main(raw_args, env):
     if len(raw_args) > 0 and raw_args[0] == '-S':
         return run_slave(get_slave_parser().parse_args(raw_args), env)
     else:
-        return run_master(get_master_parser().parse_args(raw_args))
+        if '-H' in raw_args:
+            return run_ssh_master(get_master_parser().parse_args(raw_args))
+        else:
+            return run_master(get_master_parser().parse_args(raw_args))
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:], os.environ))
