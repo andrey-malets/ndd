@@ -5,7 +5,6 @@ import os
 import socket
 import subprocess
 import sys
-import threading
 import warnings
 
 def add_non_required_options(parser):
@@ -91,10 +90,6 @@ def get_slave_cmd(args, spec):
     put_non_required_options(args, cmd)
     return cmd
 
-def get_ssh_slave_cmd(args, spec):
-    cmd = get_slave_cmd(args, spec)
-    return cmd
-
 def get_idle_nodes(partition):
     assert partition
     res = subprocess.check_output(
@@ -122,7 +117,7 @@ def get_ssh_slave_cmds(args):
     SSH = ['ssh', '-o', 'PasswordAuthentication=no']
     spec = ','.join(get_slaves(args))
     slaves = spec.split(',')
-    slave_cmd = ' '.join(get_ssh_slave_cmd(args, spec))
+    slave_cmd = ' '.join(get_slave_cmd(args, spec))
     cmds = [(SSH + [slave] + [slave_cmd]) for slave in slaves]
     return cmds
 
