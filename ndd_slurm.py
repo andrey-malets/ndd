@@ -119,8 +119,8 @@ def wait(procs):
                 try:
                     proc.terminate()
                     proc.wait()
-                except Exception as e:
-                    print e
+                except:
+                    pass
 
     for _ in procs:
         (pid, status) = os.wait()
