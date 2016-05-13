@@ -27,6 +27,8 @@ def add_common_options(parser):
         '-s', metavar='SRC', help='source machine', required=True)
     parser.add_argument(
         '-o', metavar='OUTPUT', help='output on destination', required=True)
+    parser.add_argument(
+        '-H', action='store_true', help='use ssh, not SLURM')
 
 def add_master_options(parser):
     add_common_options(parser)
@@ -99,7 +101,7 @@ def get_slaves(args):
     elif args.d is not None:
         return args.d
     else:
-        raise ValueError('one if -D or -d must be specified')
+        raise ValueError('one of -D or -d must be specified')
 
 def get_srun_cmd(args):
     SRUN = ['srun', '-D', '/', '-K', '-q']
@@ -138,9 +140,36 @@ def run_master(args):
 def run_slave(args, env):
     return subprocess.call(get_slave_ndd_cmd(args, env))
 
+def get_ssh_slave_ndd_cmd(args, host, slaves):
+    cmd = [args.n, '-o', args.o]
+    index = slaves.index(host)
+    source = args.s if index == 0 else slaves[index-1]
+    cmd += ['-r', '{}:{}'.format(source, args.p)]
+    if index != len(slaves) - 1:
+        cmd += ['-s', '{}:{}'.format(host, args.p)]
+    put_non_required_options(args, cmd)
+    return cmd
+
+def get_ssh_slave_cmds(args):
+    SSH = ['ssh', '-tt', '-o', 'PasswordAuthentication=no']
+    slaves = args.d
+    cmds = [(SSH + [slave] + get_ssh_slave_ndd_cmd(args, slave, slaves))\
+            for slave in slaves]
+    return cmds
+
+def run_ssh_master(args):
+    cmds = [get_master_ndd_cmd(args)] + get_ssh_slave_cmds(args)
+    procs = {proc.pid: proc for proc in map(subprocess.Popen, cmds)}
+    return wait(procs)
+
+def run_ssh_slave(args, env):
+    return subprocess.call(get_ssh_slave_ndd_cmd(args, env))
+
 def main(raw_args, env):
     if len(raw_args) > 0 and raw_args[0] == '-S':
         return run_slave(get_slave_parser().parse_args(raw_args), env)
+    elif '-H' in raw_args:
+        return run_ssh_master(get_master_parser().parse_args(raw_args))
     else:
         return run_master(get_master_parser().parse_args(raw_args))
 
