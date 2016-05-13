@@ -155,7 +155,7 @@ def get_ssh_slave_cmds(args):
     slaves = ','.join(args.d)
     slaves = slaves.split(',')
     cmds = [(SSH + [slave] + get_ssh_slave_ndd_cmd(args, slave, slaves))\
-           for slave in slaves]
+            for slave in slaves]
     return cmds
 
 def run_ssh_master(args):
