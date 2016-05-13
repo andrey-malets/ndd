@@ -119,8 +119,8 @@ def wait(procs):
                 try:
                     proc.terminate()
                     proc.wait()
-                except:
-                    pass
+                except Exception as e:
+                    print e
 
     for _ in procs:
         (pid, status) = os.wait()
@@ -151,7 +151,7 @@ def get_ssh_slave_ndd_cmd(args, host, slaves):
     return cmd
 
 def get_ssh_slave_cmds(args):
-    SSH = ['ssh', '-o', 'PasswordAuthentication=no']
+    SSH = ['ssh', '-tt', '-o', 'PasswordAuthentication=no']
     slaves = args.d
     cmds = [(SSH + [slave] + get_ssh_slave_ndd_cmd(args, slave, slaves))\
             for slave in slaves]
