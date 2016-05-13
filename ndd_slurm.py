@@ -152,8 +152,7 @@ def get_ssh_slave_ndd_cmd(args, host, slaves):
 
 def get_ssh_slave_cmds(args):
     SSH = ['ssh', '-o', 'PasswordAuthentication=no']
-    slaves = ','.join(args.d)
-    slaves = slaves.split(',')
+    slaves = args.d
     cmds = [(SSH + [slave] + get_ssh_slave_ndd_cmd(args, slave, slaves))\
             for slave in slaves]
     return cmds
