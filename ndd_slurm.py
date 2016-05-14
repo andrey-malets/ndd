@@ -7,6 +7,7 @@ import subprocess
 import sys
 import warnings
 
+
 def add_non_required_options(parser):
     parser.add_argument('-n', metavar='NDD', help='path to ndd', default='ndd')
     parser.add_argument('-B', metavar='BUFFER', help='buffer size')
@@ -15,11 +16,13 @@ def add_non_required_options(parser):
     parser.add_argument('-p', metavar='PORT', default='3634',
                         help='alternate port for communication (default: 3634)')
 
+
 def put_non_required_options(args, cmdline):
     vargs = vars(args)
     for name in ['B', 'b', 't']:
         if vargs.get(name) is not None:
             cmdline += ['-{}'.format(name), str(vargs[name])]
+
 
 def add_common_options(parser):
     add_non_required_options(parser)
@@ -30,6 +33,7 @@ def add_common_options(parser):
     parser.add_argument(
         '-H', action='store_true', help='use ssh, not SLURM')
 
+
 def add_master_options(parser):
     add_common_options(parser)
     parser.add_argument(
@@ -39,24 +43,29 @@ def add_master_options(parser):
     parser.add_argument(
         '-d', metavar='DEST', help='destination machine(s)', action='append')
 
+
 def add_slave_options(parser):
     add_common_options(parser)
     parser.add_argument('-S', metavar='SLAVE_SPEC', help='slaves configuration')
+
 
 def get_master_parser():
     parser = argparse.ArgumentParser('run ndd with SLURM')
     add_master_options(parser)
     return parser
 
+
 def get_slave_parser():
     parser = argparse.ArgumentParser('run ndd with SLURM (slave mode)')
     add_slave_options(parser)
     return parser
 
+
 def get_master_ndd_cmd(args):
     cmd = [args.n, '-i', args.i, '-s', '{}:{}'.format(args.s, args.p)]
     put_non_required_options(args, cmd)
     return cmd
+
 
 def get_slave_ndd_cmd(args, env):
     cmd = [args.n, '-o', args.o]
@@ -83,17 +92,20 @@ def get_slave_ndd_cmd(args, env):
     put_non_required_options(args, cmd)
     return cmd
 
+
 def get_slave_cmd(args, spec):
     cmd = [sys.executable, os.path.abspath(__file__),
            '-S', spec, '-n', args.n, '-s', args.s, '-o', args.o, '-p', args.p]
     put_non_required_options(args, cmd)
     return cmd
 
+
 def get_idle_nodes(partition):
     assert partition
     res = subprocess.check_output(
         ['sinfo', '-p', partition, '-t', 'idle', '-h', '-o' '%n'])
     return res.strip().split('\n')
+
 
 def get_slaves(args):
     if args.D is not None:
@@ -102,6 +114,7 @@ def get_slaves(args):
         return args.d
     else:
         raise ValueError('one of -D or -d must be specified')
+
 
 def get_srun_cmd(args):
     SRUN = ['srun', '-D', '/', '-K', '-q']
@@ -112,10 +125,12 @@ def get_srun_cmd(args):
         get_slave_cmd(args, spec)
     return cmd
 
+
 def init_process(cmd):
     process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
     process.stdin.close()
     return process
+
 
 def wait(procs):
     def kill():
@@ -137,13 +152,16 @@ def wait(procs):
             return 1
     return 0
 
+
 def run_master(args):
     cmds = [get_master_ndd_cmd(args), get_srun_cmd(args)]
     procs = {proc.pid: proc for proc in map(init_process, cmds)}
     return wait(procs)
 
+
 def run_slave(args, env):
     return subprocess.call(get_slave_ndd_cmd(args, env))
+
 
 def get_ssh_slave_ndd_cmd(args, host, slaves):
     cmd = [args.n, '-o', args.o]
@@ -155,6 +173,7 @@ def get_ssh_slave_ndd_cmd(args, host, slaves):
     put_non_required_options(args, cmd)
     return cmd
 
+
 def get_ssh_slave_cmds(args):
     SSH = ['ssh', '-tt', '-o', 'PasswordAuthentication=no']
     slaves = args.d
@@ -162,13 +181,16 @@ def get_ssh_slave_cmds(args):
             for slave in slaves]
     return cmds
 
+
 def run_ssh_master(args):
     cmds = [get_master_ndd_cmd(args)] + get_ssh_slave_cmds(args)
     procs = {proc.pid: proc for proc in map(init_process, cmds)}
     return wait(procs)
 
+
 def run_ssh_slave(args, env):
     return subprocess.call(get_ssh_slave_ndd_cmd(args, env))
+
 
 def main(raw_args, env):
     if len(raw_args) > 0 and raw_args[0] == '-S':
@@ -177,6 +199,7 @@ def main(raw_args, env):
         return run_ssh_master(get_master_parser().parse_args(raw_args))
     else:
         return run_master(get_master_parser().parse_args(raw_args))
+
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:], os.environ))
