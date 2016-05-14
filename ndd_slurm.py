@@ -163,13 +163,17 @@ def run_slave(args, env):
     return subprocess.call(get_slave_ndd_cmd(args, env))
 
 
-def get_ssh_slave_ndd_cmd(args, host, slaves):
+def get_host(source):
+    return source[source.index('@')+1:] if '@' in source else source
+
+
+def get_ssh_slave_ndd_cmd(args, slave, slaves):
     cmd = [args.n, '-o', args.o]
-    index = slaves.index(host)
+    index = slaves.index(slave)
     source = args.s if index == 0 else slaves[index-1]
-    cmd += ['-r', '{}:{}'.format(source, args.p)]
+    cmd += ['-r', '{}:{}'.format(get_host(source), args.p)]
     if index != len(slaves) - 1:
-        cmd += ['-s', '{}:{}'.format(host, args.p)]
+        cmd += ['-s', '{}:{}'.format(get_host(slave), args.p)]
     put_non_required_options(args, cmd)
     return cmd
 
