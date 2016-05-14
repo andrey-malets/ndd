@@ -112,6 +112,11 @@ def get_srun_cmd(args):
         get_slave_cmd(args, spec)
     return cmd
 
+def init_process(cmd):
+    process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    process.stdin.close()
+    return process
+
 def wait(procs):
     def kill():
         for proc in procs.itervalues():
@@ -134,7 +139,7 @@ def wait(procs):
 
 def run_master(args):
     cmds = [get_master_ndd_cmd(args), get_srun_cmd(args)]
-    procs = {proc.pid: proc for proc in map(subprocess.Popen, cmds)}
+    procs = {proc.pid: proc for proc in map(init_process, cmds)}
     return wait(procs)
 
 def run_slave(args, env):
@@ -159,7 +164,7 @@ def get_ssh_slave_cmds(args):
 
 def run_ssh_master(args):
     cmds = [get_master_ndd_cmd(args)] + get_ssh_slave_cmds(args)
-    procs = {proc.pid: proc for proc in map(subprocess.Popen, cmds)}
+    procs = {proc.pid: proc for proc in map(init_process, cmds)}
     return wait(procs)
 
 def run_ssh_slave(args, env):
