@@ -47,6 +47,8 @@ def add_master_options(parser):
 def add_slave_options(parser):
     add_common_options(parser)
     parser.add_argument('-S', metavar='SLAVE_SPEC', help='slaves configuration')
+    parser.add_argument(
+        '-c', metavar='CURRENT_SLAVE', help='slave specification')
 
 
 def get_master_parser():
@@ -167,6 +169,15 @@ def get_host(source):
     return source[source.index('@')+1:] if '@' in source else source
 
 
+def get_ssh_slave_cmd(args, slave, slaves):
+    spec = ','.join(slaves)
+    cmd = [sys.executable, os.path.abspath(__file__),
+           '-S', spec, '-n', args.n, '-s', args.s,\
+           '-o', args.o, '-p', args.p, '-c', slave, '-H']
+    put_non_required_options(args, cmd)
+    return cmd
+
+
 def get_ssh_slave_ndd_cmd(args, slave, slaves):
     cmd = [args.n, '-o', args.o]
     index = slaves.index(slave)
@@ -178,26 +189,31 @@ def get_ssh_slave_ndd_cmd(args, slave, slaves):
     return cmd
 
 
-def get_ssh_slave_cmds(args):
+def get_ssh_cmds(args):
     SSH = ['ssh', '-tt', '-o', 'PasswordAuthentication=no']
     slaves = args.d
-    cmds = [(SSH + [slave] + get_ssh_slave_ndd_cmd(args, slave, slaves))\
+    cmds = [(SSH + [slave] + get_ssh_slave_cmd(args, slave, slaves))\
             for slave in slaves]
+    print 'DEBUG: cmds: {}'.format(cmds)
     return cmds
 
 
 def run_ssh_master(args):
-    cmds = [get_master_ndd_cmd(args)] + get_ssh_slave_cmds(args)
+    cmds = [get_master_ndd_cmd(args)] + get_ssh_cmds(args)
     procs = {proc.pid: proc for proc in map(init_process, cmds)}
     return wait(procs)
 
 
 def run_ssh_slave(args, env):
-    return subprocess.call(get_ssh_slave_ndd_cmd(args, env))
+    slave = args.c
+    slaves = args.S.split(',')
+    return subprocess.call(get_ssh_slave_ndd_cmd(args, slave, slaves))
 
 
 def main(raw_args, env):
-    if len(raw_args) > 0 and raw_args[0] == '-S':
+    if len(raw_args) > 0 and raw_args[0] == '-S' and '-H' in raw_args:
+        return run_ssh_slave(get_slave_parser().parse_args(raw_args), env)
+    elif len(raw_args) > 0 and raw_args[0] == '-S':
         return run_slave(get_slave_parser().parse_args(raw_args), env)
     elif '-H' in raw_args:
         return run_ssh_master(get_master_parser().parse_args(raw_args))
