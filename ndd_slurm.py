@@ -89,8 +89,6 @@ def get_slave_ndd_cmd(args, env):
     if index != len(slaves) - 1:
         current_slave = slaves[index]
         cmd += ['-s', '{}:{}'.format(current_slave, args.p)]
-    else:
-        current_slave = None
     put_non_required_options(args, cmd)
     return cmd
 
@@ -194,7 +192,6 @@ def get_ssh_cmds(args):
     slaves = args.d
     cmds = [(SSH + [slave] + get_ssh_slave_cmd(args, slave, slaves))\
             for slave in slaves]
-    print 'DEBUG: cmds: {}'.format(cmds)
     return cmds
 
 
