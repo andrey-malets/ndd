@@ -208,10 +208,11 @@ def run_ssh_slave(args, env):
 
 
 def main(raw_args, env):
-    if len(raw_args) > 0 and raw_args[0] == '-S' and '-H' in raw_args:
-        return run_ssh_slave(get_slave_parser().parse_args(raw_args), env)
-    elif len(raw_args) > 0 and raw_args[0] == '-S':
-        return run_slave(get_slave_parser().parse_args(raw_args), env)
+    if len(raw_args) > 0 and raw_args[0] == '-S':
+        if '-H' in raw_args:
+            return run_ssh_slave(get_slave_parser().parse_args(raw_args), env)
+        else:
+            return run_slave(get_slave_parser().parse_args(raw_args), env)
     elif '-H' in raw_args:
         return run_ssh_master(get_master_parser().parse_args(raw_args))
     else:
