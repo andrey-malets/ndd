@@ -32,6 +32,8 @@ def add_common_options(parser):
         '-o', metavar='OUTPUT', help='output on destination', required=True)
     parser.add_argument(
         '-H', action='store_true', help='use ssh, not SLURM')
+    parser.add_argument(
+        '-P', action='store_true', help='enable piping')
 
 
 def add_master_options(parser):
@@ -63,14 +65,37 @@ def get_slave_parser():
     return parser
 
 
+def get_master_ndd_cmd_head(args):
+    if not args.P:
+        cmd = [args.n, '-i', args.i]
+    else:
+        r, w = os.pipe()
+        cmd = [args.n, '-I', '/dev/fd/{}'.format(r)]
+        tar = subprocess.Popen(['tar', '-cz', args.i],
+                               stdout=os.fdopen(w))
+    return cmd
+
+
+def get_slave_ndd_cmd_head(args):
+    if not args.P:
+        cmd = [args.n, '-o', args.o]
+    else:
+        r, w = os.pipe()
+        tar = subprocess.Popen(['tar', '-xzf', args.o],
+                               stdin=os.fdopen(r))
+        cmd = [args.n, '-O', '/dev/fd/{}'.format(w)]
+    return cmd
+
+
 def get_master_ndd_cmd(args):
-    cmd = [args.n, '-i', args.i, '-s', '{}:{}'.format(args.s, args.p)]
+    cmd = get_master_ndd_cmd_head(args)
+    cmd += ['-s', '{}:{}'.format(args.s, args.p)]
     put_non_required_options(args, cmd)
     return cmd
 
 
 def get_slave_ndd_cmd(args, env):
-    cmd = [args.n, '-o', args.o]
+    cmd = get_slave_ndd_cmd_head(args)
     slaves = args.S.split(',')
     current_host = socket.gethostname()
     if current_host in slaves:
@@ -177,7 +202,7 @@ def get_ssh_slave_cmd(args, slave, slaves):
 
 
 def get_ssh_slave_ndd_cmd(args, slave, slaves):
-    cmd = [args.n, '-o', args.o]
+    cmd = get_slave_ndd_cmd_head(args)
     index = slaves.index(slave)
     source = args.s if index == 0 else slaves[index-1]
     cmd += ['-r', '{}:{}'.format(get_host(source), args.p)]
