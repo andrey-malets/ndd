@@ -33,7 +33,7 @@ def add_common_options(parser):
     parser.add_argument(
         '-H', action='store_true', help='use ssh, not SLURM')
     parser.add_argument(
-        '-P', action='store_true', help='enable piping')
+        '-r', action='store_true', help='specify that input is a directory')
 
 
 def add_master_options(parser):
@@ -66,7 +66,7 @@ def get_slave_parser():
 
 
 def get_master_ndd_cmd_head(args):
-    if not args.P:
+    if not args.r:
         cmd = [args.n, '-i', args.i]
     else:
         r, w = os.pipe()
@@ -77,11 +77,11 @@ def get_master_ndd_cmd_head(args):
 
 
 def get_slave_ndd_cmd_head(args):
-    if not args.P:
+    if not args.r:
         cmd = [args.n, '-o', args.o]
     else:
         r, w = os.pipe()
-        tar = subprocess.Popen(['tar', '-xzf', args.o],
+        tar = subprocess.Popen(['tar', '-xzC', args.o],
                                stdin=os.fdopen(r))
         cmd = [args.n, '-O', '/dev/fd/{}'.format(w)]
     return cmd
