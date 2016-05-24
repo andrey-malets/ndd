@@ -220,14 +220,15 @@ def get_ssh_cmds(args):
 
 def run_ssh_master(args):
     if not args.r:
-        cmds = [get_master_ndd_cmd(args)] + get_ssh_cmds(args)
+        r = None
     else:
         r, w = os.pipe()
-        cmds = [get_master_ndd_cmd(args, r)] + get_ssh_cmds(args)
         tar = subprocess.Popen(['tar', '-c', args.i],
                                stdout=os.fdopen(w, 'w'))
+    cmds = [get_master_ndd_cmd(args, r)] + get_ssh_cmds(args)
     procs = {proc.pid: proc for proc in map(init_process, cmds)}
-    tar.wait()
+    if args.r:
+        tar.wait()
     return wait(procs)
 
 
