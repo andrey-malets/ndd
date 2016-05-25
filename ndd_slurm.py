@@ -162,8 +162,9 @@ def init_process(cmd, read_fd=None, write_fd=None):
 
 
 def wait(procs):
+    proc_map = {proc.pid: proc for proc in procs}
     def kill():
-        for proc in procs.itervalues():
+        for proc in proc_map.itervalues():
             if proc.poll() is None:
                 try:
                     proc.terminate()
@@ -171,10 +172,10 @@ def wait(procs):
                 except:
                     pass
 
-    for _ in procs:
+    for _ in proc_map:
         (pid, status) = os.wait()
-        assert pid in procs
-        proc = procs[pid]
+        assert pid in proc_map
+        proc = proc_map[pid]
         assert proc.wait() is not None
         if status != 0 or proc.returncode != 0:
             kill()
@@ -183,9 +184,11 @@ def wait(procs):
 
 
 def run_slave(args, env):
+    procs = []
     if args.r:
         read_fd, write_fd = os.pipe()
         tar = init_process(['tar', '-xC', args.o], read_fd=read_fd)
+        procs.append(tar)
     else:
         write_fd = None
     if args.H:
@@ -195,23 +198,21 @@ def run_slave(args, env):
                                                  slaves, write_fd))
     else:
         ndd = init_process(get_slave_ndd_cmd(args, env, write_fd))
-    procs = {ndd.pid: ndd}
-    if args.r:
-        procs[tar.pid] = tar
+    procs.append(ndd)
     return wait(procs)
 
 
 def run_master(args):
+    procs = []
     if args.r:
         read_fd, write_fd = os.pipe()
         tar = init_process(['tar', '-c', args.i], write_fd=write_fd)
+        procs.append(tar)
     else:
         read_fd = None
     cmds = [get_master_ndd_cmd(args, read_fd)]
     cmds += get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
-    procs = {proc.pid: proc for proc in map(init_process, cmds)}
-    if args.r:
-        procs[tar.pid] = tar
+    procs.extend(map(init_process, cmds))
     return wait(procs)
 
 
