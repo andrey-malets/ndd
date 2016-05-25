@@ -32,6 +32,8 @@ def add_common_options(parser):
         '-o', metavar='OUTPUT', help='output on destination', required=True)
     parser.add_argument(
         '-H', action='store_true', help='use ssh, not SLURM')
+    parser.add_argument(
+        '-r', action='store_true', help='specify that input is a directory')
 
 
 def add_master_options(parser):
@@ -63,15 +65,23 @@ def get_slave_parser():
     return parser
 
 
-def get_master_ndd_cmd(args):
-    cmd = [args.n, '-i', args.i, '-s', '{}:{}'.format(args.s, args.p)]
-    put_non_required_options(args, cmd)
+def get_master_input_args(args, read_fd):
+    if read_fd:
+        cmd = ['-I', '/dev/fd/{}'.format(read_fd)]
+    else:
+        cmd = ['-i', args.i]
     return cmd
 
 
-def get_slave_ndd_cmd(args, env):
-    cmd = [args.n, '-o', args.o]
-    slaves = args.S.split(',')
+def get_slave_output_args(args, write_fd):
+    if write_fd:
+        cmd = ['-O', '/dev/fd/{}'.format(write_fd)]
+    else:
+        cmd = ['-o', args.o]
+    return cmd
+
+
+def get_source_for_slave(args, slaves):
     current_host = socket.gethostname()
     if current_host in slaves:
         index = slaves.index(current_host)
@@ -85,6 +95,29 @@ def get_slave_ndd_cmd(args, env):
         else:
             raise IndexError('{} is not in slaves list'.format(current_host))
     source = args.s if index == 0 else slaves[index-1]
+    return index, source
+
+
+def get_slave_cmd(args, slave=None, slaves=None, spec=None):
+    assert spec or slave and slaves
+    if spec is None:
+        spec = ','.join(slaves)
+    cmd = [sys.executable, os.path.abspath(__file__),
+           '-S', spec, '-n', args.n, '-s', args.s,\
+           '-o', args.o, '-p', args.p]
+    if args.H:
+        cmd += ['-c', slave, '-H']
+    if args.r:
+        cmd += ['-r']
+    put_non_required_options(args, cmd)
+    return cmd
+
+
+def get_slave_ndd_cmd(args, write_fd=None):
+    cmd = [args.n]
+    cmd += get_slave_output_args(args, write_fd)
+    slaves = args.S.split(',')
+    index, source = get_source_for_slave(args, slaves)
     cmd += ['-r', '{}:{}'.format(source, args.p)]
     if index != len(slaves) - 1:
         current_slave = slaves[index]
@@ -93,11 +126,46 @@ def get_slave_ndd_cmd(args, env):
     return cmd
 
 
-def get_slave_cmd(args, spec):
-    cmd = [sys.executable, os.path.abspath(__file__),
-           '-S', spec, '-n', args.n, '-s', args.s, '-o', args.o, '-p', args.p]
+def get_ssh_slave_ndd_cmd(args, slave=None, slaves=None, write_fd=None):
+    cmd = [args.n]
+    cmd += get_slave_output_args(args, write_fd)
+    index = slaves.index(slave)
+    source = args.s if index == 0 else slaves[index-1]
+    cmd += ['-r', '{}:{}'.format(get_host(source), args.p)]
+    if index != len(slaves) - 1:
+        cmd += ['-s', '{}:{}'.format(get_host(slave), args.p)]
     put_non_required_options(args, cmd)
     return cmd
+
+
+def get_master_ndd_cmd(args, read_fd=None):
+    cmd = [args.n]
+    cmd += get_master_input_args(args, read_fd)
+    cmd += ['-s', '{}:{}'.format(args.s, args.p)]
+    put_non_required_options(args, cmd)
+    return cmd
+
+
+def get_srun_cmd(args):
+    SRUN = ['srun', '-D', '/', '-K', '-q']
+    slaves = get_slaves(args)
+    spec = ','.join(slaves)
+    cmd = SRUN + \
+        ['-N', str(len(slaves)), '-w', spec] + \
+        get_slave_cmd(args, spec=spec)
+    return cmd
+
+
+def get_ssh_cmds(args):
+    SSH = ['ssh', '-tt', '-o', 'PasswordAuthentication=no']
+    slaves = args.d
+    cmds = [(SSH + [slave] + get_slave_cmd(args, slave=slave, slaves=slaves))\
+            for slave in slaves]
+    return cmds
+
+
+def get_host(source):
+    return source[source.index('@')+1:] if '@' in source else source
 
 
 def get_idle_nodes(partition):
@@ -116,25 +184,52 @@ def get_slaves(args):
         raise ValueError('one of -D or -d must be specified')
 
 
-def get_srun_cmd(args):
-    SRUN = ['srun', '-D', '/', '-K', '-q']
-    slaves = get_slaves(args)
-    spec = ','.join(slaves)
-    cmd = SRUN + \
-        ['-N', str(len(slaves)), '-w', spec] + \
-        get_slave_cmd(args, spec)
-    return cmd
+def run_slave(args):
+    procs = []
+    if args.r:
+        read_fd, write_fd = os.pipe()
+        procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
+    else:
+        write_fd = None
+    if args.H:
+        slave = args.c
+        slaves = args.S.split(',')
+        cmd = get_ssh_slave_ndd_cmd(args, slave, slaves, write_fd)
+    else:
+        cmd = get_slave_ndd_cmd(args, write_fd)
+    procs.append(init_process(cmd))
+    return wait(procs)
 
 
-def init_process(cmd):
-    process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-    process.stdin.close()
+def run_master(args):
+    procs = []
+    if args.r:
+        read_fd, write_fd = os.pipe()
+        procs.append(init_process(['tar', '-c', args.i], write_fd=write_fd))
+    else:
+        read_fd = None
+    cmds = [get_master_ndd_cmd(args, read_fd)]
+    cmds += get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
+    procs.extend(map(init_process, cmds))
+    return wait(procs)
+
+
+def init_process(cmd, read_fd=None, write_fd=None):
+    assert not (read_fd and write_fd)
+    if read_fd is not None:
+        process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd))
+    elif write_fd is not None:
+        process = subprocess.Popen(cmd, stdout=os.fdopen(write_fd, 'w'))
+    else:
+        process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        process.stdin.close()
     return process
 
 
 def wait(procs):
+    proc_map = {proc.pid: proc for proc in procs}
     def kill():
-        for proc in procs.itervalues():
+        for proc in proc_map.itervalues():
             if proc.poll() is None:
                 try:
                     proc.terminate()
@@ -142,10 +237,10 @@ def wait(procs):
                 except:
                     pass
 
-    for _ in procs:
+    for _ in proc_map:
         (pid, status) = os.wait()
-        assert pid in procs
-        proc = procs[pid]
+        assert pid in proc_map
+        proc = proc_map[pid]
         assert proc.wait() is not None
         if status != 0 or proc.returncode != 0:
             kill()
@@ -153,72 +248,12 @@ def wait(procs):
     return 0
 
 
-def run_master(args):
-    cmds = [get_master_ndd_cmd(args), get_srun_cmd(args)]
-    procs = {proc.pid: proc for proc in map(init_process, cmds)}
-    return wait(procs)
-
-
-def run_slave(args, env):
-    return subprocess.call(get_slave_ndd_cmd(args, env))
-
-
-def get_host(source):
-    return source[source.index('@')+1:] if '@' in source else source
-
-
-def get_ssh_slave_cmd(args, slave, slaves):
-    spec = ','.join(slaves)
-    cmd = [sys.executable, os.path.abspath(__file__),
-           '-S', spec, '-n', args.n, '-s', args.s,\
-           '-o', args.o, '-p', args.p, '-c', slave, '-H']
-    put_non_required_options(args, cmd)
-    return cmd
-
-
-def get_ssh_slave_ndd_cmd(args, slave, slaves):
-    cmd = [args.n, '-o', args.o]
-    index = slaves.index(slave)
-    source = args.s if index == 0 else slaves[index-1]
-    cmd += ['-r', '{}:{}'.format(get_host(source), args.p)]
-    if index != len(slaves) - 1:
-        cmd += ['-s', '{}:{}'.format(get_host(slave), args.p)]
-    put_non_required_options(args, cmd)
-    return cmd
-
-
-def get_ssh_cmds(args):
-    SSH = ['ssh', '-tt', '-o', 'PasswordAuthentication=no']
-    slaves = args.d
-    cmds = [(SSH + [slave] + get_ssh_slave_cmd(args, slave, slaves))\
-            for slave in slaves]
-    return cmds
-
-
-def run_ssh_master(args):
-    cmds = [get_master_ndd_cmd(args)] + get_ssh_cmds(args)
-    procs = {proc.pid: proc for proc in map(init_process, cmds)}
-    return wait(procs)
-
-
-def run_ssh_slave(args, env):
-    slave = args.c
-    slaves = args.S.split(',')
-    return subprocess.call(get_ssh_slave_ndd_cmd(args, slave, slaves))
-
-
-def main(raw_args, env):
+def main(raw_args):
     if len(raw_args) > 0 and raw_args[0] == '-S':
-        args = get_slave_parser().parse_args(raw_args)
-        if '-H' in raw_args:
-            return run_ssh_slave(args, env)
-        else:
-            return run_slave(args, env)
-    elif '-H' in raw_args:
-        return run_ssh_master(get_master_parser().parse_args(raw_args))
+        return run_slave(get_slave_parser().parse_args(raw_args))
     else:
         return run_master(get_master_parser().parse_args(raw_args))
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:], os.environ))
+    sys.exit(main(sys.argv[1:]))
