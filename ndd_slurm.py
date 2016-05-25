@@ -66,15 +66,15 @@ def get_slave_parser():
 
 
 def get_master_input_args(args, read_fd):
-    if args.r:
+    if read_fd:
         cmd = ['-I', '/dev/fd/{}'.format(read_fd)]
     else:
         cmd = ['-i', args.i]
     return cmd
 
 
-def get_slave_input_args(args, write_fd):
-    if args.r:
+def get_slave_output_args(args, write_fd):
+    if write_fd:
         cmd = ['-O', '/dev/fd/{}'.format(write_fd)]
     else:
         cmd = ['-o', args.o]
@@ -91,7 +91,7 @@ def get_master_ndd_cmd(args, read_fd=None):
 
 def get_slave_ndd_cmd(args, env, write_fd=None):
     cmd = [args.n]
-    cmd += get_slave_input_args(args, write_fd)
+    cmd += get_slave_output_args(args, write_fd)
     slaves = args.S.split(',')
     current_host = socket.gethostname()
     if current_host in slaves:
@@ -209,7 +209,7 @@ def get_ssh_slave_cmd(args, slave, slaves):
 
 def get_ssh_slave_ndd_cmd(args, slave, slaves, write_fd=None):
     cmd = [args.n]
-    cmd += get_slave_input_args(args, write_fd)
+    cmd += get_slave_output_args(args, write_fd)
     index = slaves.index(slave)
     source = args.s if index == 0 else slaves[index-1]
     cmd += ['-r', '{}:{}'.format(get_host(source), args.p)]
