@@ -150,6 +150,7 @@ def get_srun_cmd(args):
 
 
 def init_process(cmd, read_fd=None, write_fd=None):
+    assert read_fd is None or write_fd is None
     if read_fd is not None:
         process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd))
     elif write_fd is not None:
@@ -235,7 +236,7 @@ def run_ssh_master(args):
     cmds = [get_master_ndd_cmd(args, r)] + get_ssh_cmds(args)
     procs = {proc.pid: proc for proc in map(init_process, cmds)}
     if args.r:
-        procs.update({tar.pid: tar})
+        procs[tar.pid] = tar
     return wait(procs)
 
 
@@ -250,7 +251,7 @@ def run_ssh_slave(args, env):
     ndd = init_process(get_ssh_slave_ndd_cmd(args, slave, slaves, w))
     procs = {ndd.pid: ndd}
     if args.r:
-        procs.update({tar.pid: tar})
+        procs[tar.pid] = tar
     return wait(procs)
 
 
