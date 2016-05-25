@@ -81,14 +81,6 @@ def get_slave_output_args(args, write_fd):
     return cmd
 
 
-def get_master_ndd_cmd(args, read_fd=None):
-    cmd = [args.n]
-    cmd += get_master_input_args(args, read_fd)
-    cmd += ['-s', '{}:{}'.format(args.s, args.p)]
-    put_non_required_options(args, cmd)
-    return cmd
-
-
 def get_source_for_slave(args, slaves):
     current_host = socket.gethostname()
     if current_host in slaves:
@@ -106,7 +98,22 @@ def get_source_for_slave(args, slaves):
     return index, source
 
 
-def get_slave_ndd_cmd(args, env, write_fd=None):
+def get_slave_cmd(args, slave=None, slaves=None, spec=None):
+    assert spec or slave and slaves
+    if spec is None:
+        spec = ','.join(slaves)
+    cmd = [sys.executable, os.path.abspath(__file__),
+           '-S', spec, '-n', args.n, '-s', args.s,\
+           '-o', args.o, '-p', args.p]
+    if args.H:
+        cmd += ['-c', slave, '-H']
+    if args.r:
+        cmd += ['-r']
+    put_non_required_options(args, cmd)
+    return cmd
+
+
+def get_slave_ndd_cmd(args, write_fd=None):
     cmd = [args.n]
     cmd += get_slave_output_args(args, write_fd)
     slaves = args.S.split(',')
@@ -119,13 +126,46 @@ def get_slave_ndd_cmd(args, env, write_fd=None):
     return cmd
 
 
-def get_slave_cmd(args, spec):
-    cmd = [sys.executable, os.path.abspath(__file__),
-           '-S', spec, '-n', args.n, '-s', args.s, '-o', args.o, '-p', args.p]
-    if args.r:
-        cmd += ['-r']
+def get_ssh_slave_ndd_cmd(args, slave=None, slaves=None, write_fd=None):
+    cmd = [args.n]
+    cmd += get_slave_output_args(args, write_fd)
+    index = slaves.index(slave)
+    source = args.s if index == 0 else slaves[index-1]
+    cmd += ['-r', '{}:{}'.format(get_host(source), args.p)]
+    if index != len(slaves) - 1:
+        cmd += ['-s', '{}:{}'.format(get_host(slave), args.p)]
     put_non_required_options(args, cmd)
     return cmd
+
+
+def get_master_ndd_cmd(args, read_fd=None):
+    cmd = [args.n]
+    cmd += get_master_input_args(args, read_fd)
+    cmd += ['-s', '{}:{}'.format(args.s, args.p)]
+    put_non_required_options(args, cmd)
+    return cmd
+
+
+def get_srun_cmd(args):
+    SRUN = ['srun', '-D', '/', '-K', '-q']
+    slaves = get_slaves(args)
+    spec = ','.join(slaves)
+    cmd = SRUN + \
+        ['-N', str(len(slaves)), '-w', spec] + \
+        get_slave_cmd(args, spec=spec)
+    return cmd
+
+
+def get_ssh_cmds(args):
+    SSH = ['ssh', '-tt', '-o', 'PasswordAuthentication=no']
+    slaves = args.d
+    cmds = [(SSH + [slave] + get_slave_cmd(args, slave=slave, slaves=slaves))\
+            for slave in slaves]
+    return cmds
+
+
+def get_host(source):
+    return source[source.index('@')+1:] if '@' in source else source
 
 
 def get_idle_nodes(partition):
@@ -144,14 +184,34 @@ def get_slaves(args):
         raise ValueError('one of -D or -d must be specified')
 
 
-def get_srun_cmd(args):
-    SRUN = ['srun', '-D', '/', '-K', '-q']
-    slaves = get_slaves(args)
-    spec = ','.join(slaves)
-    cmd = SRUN + \
-        ['-N', str(len(slaves)), '-w', spec] + \
-        get_slave_cmd(args, spec)
-    return cmd
+def run_slave(args):
+    procs = []
+    if args.r:
+        read_fd, write_fd = os.pipe()
+        procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
+    else:
+        write_fd = None
+    if args.H:
+        slave = args.c
+        slaves = args.S.split(',')
+        cmd = get_ssh_slave_ndd_cmd(args, slave, slaves, write_fd)
+    else:
+        cmd = get_slave_ndd_cmd(args, write_fd)
+    procs.append(init_process(cmd))
+    return wait(procs)
+
+
+def run_master(args):
+    procs = []
+    if args.r:
+        read_fd, write_fd = os.pipe()
+        procs.append(init_process(['tar', '-c', args.i], write_fd=write_fd))
+    else:
+        read_fd = None
+    cmds = [get_master_ndd_cmd(args, read_fd)]
+    cmds += get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
+    procs.extend(map(init_process, cmds))
+    return wait(procs)
 
 
 def init_process(cmd, read_fd=None, write_fd=None):
@@ -188,77 +248,12 @@ def wait(procs):
     return 0
 
 
-def run_slave(args, env):
-    procs = []
-    if args.r:
-        read_fd, write_fd = os.pipe()
-        procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
-    else:
-        write_fd = None
-    if args.H:
-        slave = args.c
-        slaves = args.S.split(',')
-        cmd = get_ssh_slave_ndd_cmd(args, slave, slaves, write_fd)
-    else:
-        cmd = get_slave_ndd_cmd(args, env, write_fd)
-    procs.append(init_process(cmd))
-    return wait(procs)
-
-
-def run_master(args):
-    procs = []
-    if args.r:
-        read_fd, write_fd = os.pipe()
-        procs.append(init_process(['tar', '-c', args.i], write_fd=write_fd))
-    else:
-        read_fd = None
-    cmds = [get_master_ndd_cmd(args, read_fd)]
-    cmds += get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
-    procs.extend(map(init_process, cmds))
-    return wait(procs)
-
-
-def get_host(source):
-    return source[source.index('@')+1:] if '@' in source else source
-
-
-def get_ssh_slave_cmd(args, slave, slaves):
-    spec = ','.join(slaves)
-    cmd = [sys.executable, os.path.abspath(__file__),
-           '-S', spec, '-n', args.n, '-s', args.s,\
-           '-o', args.o, '-p', args.p, '-c', slave, '-H']
-    if args.r:
-        cmd += ['-r']
-    put_non_required_options(args, cmd)
-    return cmd
-
-
-def get_ssh_slave_ndd_cmd(args, slave, slaves, write_fd=None):
-    cmd = [args.n]
-    cmd += get_slave_output_args(args, write_fd)
-    index = slaves.index(slave)
-    source = args.s if index == 0 else slaves[index-1]
-    cmd += ['-r', '{}:{}'.format(get_host(source), args.p)]
-    if index != len(slaves) - 1:
-        cmd += ['-s', '{}:{}'.format(get_host(slave), args.p)]
-    put_non_required_options(args, cmd)
-    return cmd
-
-
-def get_ssh_cmds(args):
-    SSH = ['ssh', '-tt', '-o', 'PasswordAuthentication=no']
-    slaves = args.d
-    cmds = [(SSH + [slave] + get_ssh_slave_cmd(args, slave, slaves))\
-            for slave in slaves]
-    return cmds
-
-
-def main(raw_args, env):
+def main(raw_args):
     if len(raw_args) > 0 and raw_args[0] == '-S':
-        return run_slave(get_slave_parser().parse_args(raw_args), env)
+        return run_slave(get_slave_parser().parse_args(raw_args))
     else:
         return run_master(get_master_parser().parse_args(raw_args))
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1:], os.environ))
+    sys.exit(main(sys.argv[1:]))
