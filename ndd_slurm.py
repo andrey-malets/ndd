@@ -150,7 +150,7 @@ def get_srun_cmd(args):
 
 
 def init_process(cmd, read_fd=None, write_fd=None):
-    assert read_fd is None or write_fd is None
+    assert not (read_fd and write_fd)
     if read_fd is not None:
         process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd))
     elif write_fd is not None:
@@ -229,11 +229,11 @@ def get_ssh_cmds(args):
 
 def run_ssh_master(args):
     if args.r:
-        r, w = os.pipe()
-        tar = init_process(['tar', '-c', args.i], write_fd=w)
+        read_fd, write_fd = os.pipe()
+        tar = init_process(['tar', '-c', args.i], write_fd=write_fd)
     else:
-        r = None
-    cmds = [get_master_ndd_cmd(args, r)] + get_ssh_cmds(args)
+        read_fd = None
+    cmds = [get_master_ndd_cmd(args, read_fd)] + get_ssh_cmds(args)
     procs = {proc.pid: proc for proc in map(init_process, cmds)}
     if args.r:
         procs[tar.pid] = tar
@@ -244,11 +244,11 @@ def run_ssh_slave(args, env):
     slave = args.c
     slaves = args.S.split(',')
     if args.r:
-        r, w = os.pipe()
-        tar = init_process(['tar', '-xC', args.o], read_fd=r)
+        read_fd, write_fd = os.pipe()
+        tar = init_process(['tar', '-xC', args.o], read_fd=read_fd)
     else:
-        w = None
-    ndd = init_process(get_ssh_slave_ndd_cmd(args, slave, slaves, w))
+        write_fd = None
+    ndd = init_process(get_ssh_slave_ndd_cmd(args, slave, slaves, write_fd))
     procs = {ndd.pid: ndd}
     if args.r:
         procs[tar.pid] = tar
