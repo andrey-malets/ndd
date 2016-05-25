@@ -89,10 +89,7 @@ def get_master_ndd_cmd(args, read_fd=None):
     return cmd
 
 
-def get_slave_ndd_cmd(args, env, write_fd=None):
-    cmd = [args.n]
-    cmd += get_slave_output_args(args, write_fd)
-    slaves = args.S.split(',')
+def get_source_for_slave(args, slaves):
     current_host = socket.gethostname()
     if current_host in slaves:
         index = slaves.index(current_host)
@@ -106,6 +103,14 @@ def get_slave_ndd_cmd(args, env, write_fd=None):
         else:
             raise IndexError('{} is not in slaves list'.format(current_host))
     source = args.s if index == 0 else slaves[index-1]
+    return index, source
+
+
+def get_slave_ndd_cmd(args, env, write_fd=None):
+    cmd = [args.n]
+    cmd += get_slave_output_args(args, write_fd)
+    slaves = args.S.split(',')
+    index, source = get_source_for_slave(args, slaves)
     cmd += ['-r', '{}:{}'.format(source, args.p)]
     if index != len(slaves) - 1:
         current_slave = slaves[index]
