@@ -65,31 +65,33 @@ def get_slave_parser():
     return parser
 
 
-def get_master_ndd_cmd_head(args, r):
+def get_master_input_args(args, read_fd):
     if not args.r:
-        cmd = [args.n, '-i', args.i]
+        cmd = ['-i', args.i]
     else:
-        cmd = [args.n, '-I', '/dev/fd/{}'.format(r)]
+        cmd = ['-I', '/dev/fd/{}'.format(read_fd)]
     return cmd
 
 
-def get_slave_ndd_cmd_head(args, w):
+def get_slave_input_args(args, write_fd):
     if not args.r:
-        cmd = [args.n, '-o', args.o]
+        cmd = ['-o', args.o]
     else:
-        cmd = [args.n, '-O', '/dev/fd/{}'.format(w)]
+        cmd = ['-O', '/dev/fd/{}'.format(write_fd)]
     return cmd
 
 
-def get_master_ndd_cmd(args, r=None):
-    cmd = get_master_ndd_cmd_head(args, r)
+def get_master_ndd_cmd(args, read_fd=None):
+    cmd = [args.n]
+    cmd += get_master_input_args(args, read_fd)
     cmd += ['-s', '{}:{}'.format(args.s, args.p)]
     put_non_required_options(args, cmd)
     return cmd
 
 
-def get_slave_ndd_cmd(args, env, w=None):
-    cmd = get_slave_ndd_cmd_head(args, w)
+def get_slave_ndd_cmd(args, env, write_fd=None):
+    cmd = [args.n]
+    cmd += get_slave_input_args(args, write_fd)
     slaves = args.S.split(',')
     current_host = socket.gethostname()
     if current_host in slaves:
@@ -147,9 +149,14 @@ def get_srun_cmd(args):
     return cmd
 
 
-def init_process(cmd):
-    process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-    process.stdin.close()
+def init_process(cmd, read_fd=None, write_fd=None):
+    if read_fd is not None:
+        process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd))
+    elif write_fd is not None:
+        process = subprocess.Popen(cmd, stdout=os.fdopen(write_fd, 'w'))
+    else:
+        process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+        process.stdin.close()
     return process
 
 
@@ -199,8 +206,9 @@ def get_ssh_slave_cmd(args, slave, slaves):
     return cmd
 
 
-def get_ssh_slave_ndd_cmd(args, slave, slaves, w=None):
-    cmd = get_slave_ndd_cmd_head(args, w)
+def get_ssh_slave_ndd_cmd(args, slave, slaves, write_fd=None):
+    cmd = [args.n]
+    cmd += get_slave_input_args(args, write_fd)
     index = slaves.index(slave)
     source = args.s if index == 0 else slaves[index-1]
     cmd += ['-r', '{}:{}'.format(get_host(source), args.p)]
@@ -219,29 +227,31 @@ def get_ssh_cmds(args):
 
 
 def run_ssh_master(args):
-    if not args.r:
-        r = None
-    else:
+    if args.r:
         r, w = os.pipe()
-        tar = subprocess.Popen(['tar', '-c', args.i],
-                               stdout=os.fdopen(w, 'w'))
+        tar = init_process(['tar', '-c', args.i], write_fd=w)
+    else:
+        r = None
     cmds = [get_master_ndd_cmd(args, r)] + get_ssh_cmds(args)
     procs = {proc.pid: proc for proc in map(init_process, cmds)}
     if args.r:
-        tar.wait()
+        procs.update({tar.pid: tar})
     return wait(procs)
 
 
 def run_ssh_slave(args, env):
     slave = args.c
     slaves = args.S.split(',')
-    if not args.r:
-        w = None
-    else:
+    if args.r:
         r, w = os.pipe()
-        tar = subprocess.Popen(['tar', '-xC', args.o],
-                               stdin=os.fdopen(r))
-    return subprocess.call(get_ssh_slave_ndd_cmd(args, slave, slaves, w))
+        tar = init_process(['tar', '-xC', args.o], read_fd=r)
+    else:
+        w = None
+    ndd = init_process(get_ssh_slave_ndd_cmd(args, slave, slaves, w))
+    procs = {ndd.pid: ndd}
+    if args.r:
+        procs.update({tar.pid: tar})
+    return wait(procs)
 
 
 def main(raw_args, env):
