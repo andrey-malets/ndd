@@ -182,14 +182,37 @@ def wait(procs):
     return 0
 
 
-def run_master(args):
-    cmds = [get_master_ndd_cmd(args), get_srun_cmd(args)]
-    procs = {proc.pid: proc for proc in map(init_process, cmds)}
+def run_slave(args, env):
+    if args.r:
+        read_fd, write_fd = os.pipe()
+        tar = init_process(['tar', '-xC', args.o], read_fd=read_fd)
+    else:
+        write_fd = None
+    if args.H:
+        slave = args.c
+        slaves = args.S.split(',')
+        ndd = init_process(get_ssh_slave_ndd_cmd(args, slave,\
+                                                 slaves, write_fd))
+    else:
+        ndd = init_process(get_slave_ndd_cmd(args, env, write_fd))
+    procs = {ndd.pid: ndd}
+    if args.r:
+        procs[tar.pid] = tar
     return wait(procs)
 
 
-def run_slave(args, env):
-    return subprocess.call(get_slave_ndd_cmd(args, env))
+def run_master(args):
+    if args.r:
+        read_fd, write_fd = os.pipe()
+        tar = init_process(['tar', '-c', args.i], write_fd=write_fd)
+    else:
+        read_fd = None
+    cmds = [get_master_ndd_cmd(args, read_fd)]
+    cmds += get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
+    procs = {proc.pid: proc for proc in map(init_process, cmds)}
+    if args.r:
+        procs[tar.pid] = tar
+    return wait(procs)
 
 
 def get_host(source):
@@ -227,43 +250,9 @@ def get_ssh_cmds(args):
     return cmds
 
 
-def run_ssh_master(args):
-    if args.r:
-        read_fd, write_fd = os.pipe()
-        tar = init_process(['tar', '-c', args.i], write_fd=write_fd)
-    else:
-        read_fd = None
-    cmds = [get_master_ndd_cmd(args, read_fd)] + get_ssh_cmds(args)
-    procs = {proc.pid: proc for proc in map(init_process, cmds)}
-    if args.r:
-        procs[tar.pid] = tar
-    return wait(procs)
-
-
-def run_ssh_slave(args, env):
-    slave = args.c
-    slaves = args.S.split(',')
-    if args.r:
-        read_fd, write_fd = os.pipe()
-        tar = init_process(['tar', '-xC', args.o], read_fd=read_fd)
-    else:
-        write_fd = None
-    ndd = init_process(get_ssh_slave_ndd_cmd(args, slave, slaves, write_fd))
-    procs = {ndd.pid: ndd}
-    if args.r:
-        procs[tar.pid] = tar
-    return wait(procs)
-
-
 def main(raw_args, env):
     if len(raw_args) > 0 and raw_args[0] == '-S':
-        args = get_slave_parser().parse_args(raw_args)
-        if '-H' in raw_args:
-            return run_ssh_slave(args, env)
-        else:
-            return run_slave(args, env)
-    elif '-H' in raw_args:
-        return run_ssh_master(get_master_parser().parse_args(raw_args))
+        return run_slave(get_slave_parser().parse_args(raw_args), env)
     else:
         return run_master(get_master_parser().parse_args(raw_args))
 
