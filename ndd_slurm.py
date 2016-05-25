@@ -192,18 +192,16 @@ def run_slave(args, env):
     procs = []
     if args.r:
         read_fd, write_fd = os.pipe()
-        tar = init_process(['tar', '-xC', args.o], read_fd=read_fd)
-        procs.append(tar)
+        procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
     else:
         write_fd = None
     if args.H:
         slave = args.c
         slaves = args.S.split(',')
-        ndd = init_process(get_ssh_slave_ndd_cmd(args, slave,\
-                                                 slaves, write_fd))
+        cmd = get_ssh_slave_ndd_cmd(args, slave, slaves, write_fd)
     else:
-        ndd = init_process(get_slave_ndd_cmd(args, env, write_fd))
-    procs.append(ndd)
+        cmd = get_slave_ndd_cmd(args, env, write_fd)
+    procs.append(init_process(cmd))
     return wait(procs)
 
 
@@ -211,8 +209,7 @@ def run_master(args):
     procs = []
     if args.r:
         read_fd, write_fd = os.pipe()
-        tar = init_process(['tar', '-c', args.i], write_fd=write_fd)
-        procs.append(tar)
+        procs.append(init_process(['tar', '-c', args.i], write_fd=write_fd))
     else:
         read_fd = None
     cmds = [get_master_ndd_cmd(args, read_fd)]
