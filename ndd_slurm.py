@@ -66,18 +66,18 @@ def get_slave_parser():
 
 
 def get_master_input_args(args, read_fd):
-    if not args.r:
-        cmd = ['-i', args.i]
-    else:
+    if args.r:
         cmd = ['-I', '/dev/fd/{}'.format(read_fd)]
+    else:
+        cmd = ['-i', args.i]
     return cmd
 
 
 def get_slave_input_args(args, write_fd):
-    if not args.r:
-        cmd = ['-o', args.o]
-    else:
+    if args.r:
         cmd = ['-O', '/dev/fd/{}'.format(write_fd)]
+    else:
+        cmd = ['-o', args.o]
     return cmd
 
 
