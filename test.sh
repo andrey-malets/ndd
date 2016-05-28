@@ -1,46 +1,28 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 
 DRIVER="ndd_slurm.py"
 NDD_DIR="$HOME/ndd/"
 TEST_DIR=$NDD_DIR"test/"
 PORT=3687
 
-
-failed=()
 available=()
+unreachable=()
 
-
-function blacklist {
-  echo Error: no $NDD_DIR on $1
-  failed+=($1)
-  return
-}
-
-
-function whitelist {
-  available+=($1)
-  return
-}
-
-
-function check_hosts {
+check_hosts() {
   for host in $@; do
     ping -c 1 $host > /dev/null
-    if [ $? -ne 0 ]; then
-      blacklist $host
+    if [ $? -eq 0 ]; then
+      available+=($host)
     else
-      whitelist $host
+      unreachable+=($host)
     fi
   done
-  if [ ${#failed[@]} -ne 0 ]; then
-    echo Failed hosts are: ${failed[@]}
+  if [ ${#unreachable[@]} -ne 0 ]; then
+    echo Unreachable hosts: ${unreachable[@]}
   fi
-  return
 }
 
-
-function prepare_hosts {
+prepare_hosts() {
   for host in ${available[@]}; do
     if ! ssh $host [ -d $NDD_DIR ]; then
       ssh $host mkdir $NDD_DIR
@@ -49,42 +31,35 @@ function prepare_hosts {
       ssh $host mkdir $TEST_DIR
     fi
   done
-  return
 }
 
-
-function send_driver {
+send_driver() {
   for host in ${available[@]}; do
     scp $DRIVER $host:$NDD_DIR$DRIVER
   done
-  return
 }
 
-
-function get_spec {
-  spec=()
+get_slaves() {
+  slaves=()
   hosts=$@
   for host in ${hosts[@]}; do
-    spec+=("-d "$host)
+    slaves+=("-d "$host)
   done
-  echo ${spec[@]}
+  echo ${slaves[@]}
 }
 
-
-function run {
+run() {
   ip=$(/sbin/ifconfig | grep 172 | awk '{print $2}' | cut -d ':' -f2)
-  spec=$(get_spec $available)
-  python ndd_slurm.py -s $ip -i $TEST_DIR -o $TEST_DIR ${spec[@]}\
+  slaves=$(get_slaves $available)
+  python ndd_slurm.py -s $ip -i $TEST_DIR -o $TEST_DIR ${slaves[@]}\
                       -p $PORT -H -r
 }
 
-
-function main {
+main() {
   check_hosts $@
   prepare_hosts
   send_driver
   run
-  return
 }
 
 main $@
