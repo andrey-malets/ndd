@@ -34,6 +34,8 @@ def add_common_options(parser):
         '-H', action='store_true', help='use ssh, not SLURM')
     parser.add_argument(
         '-r', action='store_true', help='specify that input is a directory')
+    parser.add_argument(
+        '-z', action='store_true', help='enable compression with pigz')
 
 
 def add_master_options(parser):
@@ -109,6 +111,8 @@ def get_slave_cmd(args, slave=None, slaves=None, spec=None):
         cmd += ['-c', slave, '-H']
     if args.r:
         cmd += ['-r']
+    if args.z:
+        cmd += ['-z']
     put_non_required_options(args, cmd)
     return cmd
 
@@ -186,7 +190,15 @@ def get_slaves(args):
 
 def run_slave(args):
     procs = []
-    if args.r:
+    if args.z and args.r:
+        pigz_read_fd, pigz_write_fd = os.pipe()
+        read_fd, write_fd = os.pipe()
+        procs.append(init_process(['pigz', '-d'], read_fd=pigz_read_fd,
+                                  write_fd=write_fd))
+        write_fd = pigz_write_fd
+        tar_read_fd, tar_write_fd = os.pipe()
+        procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
+    elif args.r:
         read_fd, write_fd = os.pipe()
         procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
     else:
@@ -204,10 +216,17 @@ def run_slave(args):
 def run_master(args):
     procs = []
     if args.r:
-        read_fd, write_fd = os.pipe()
-        procs.append(init_process(['tar', '-c', args.i], write_fd=write_fd))
+        tar_read_fd, tar_write_fd = os.pipe()
+        procs.append(init_process(['tar', '-c', args.i],
+                     write_fd=tar_write_fd))
+        read_fd = tar_read_fd
     else:
         read_fd = None
+    if args.z:
+        pigz_read_fd, pigz_write_fd = os.pipe()
+        procs.append(init_process(['pigz', '--fast'], read_fd=tar_read_fd,
+                                  write_fd=pigz_write_fd))
+        read_fd = pigz_read_fd
     cmds = [get_master_ndd_cmd(args, read_fd)]
     cmds += get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
     procs.extend(map(init_process, cmds))
@@ -215,10 +234,12 @@ def run_master(args):
 
 
 def init_process(cmd, read_fd=None, write_fd=None):
-    assert not (read_fd and write_fd)
-    if read_fd is not None:
+    if read_fd and write_fd:
+        process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd),
+                                   stdout=os.fdopen(write_fd, 'w'))
+    elif read_fd:
         process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd))
-    elif write_fd is not None:
+    elif write_fd:
         process = subprocess.Popen(cmd, stdout=os.fdopen(write_fd, 'w'))
     else:
         process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
