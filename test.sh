@@ -2,7 +2,7 @@
 
 DRIVER="ndd_slurm.py"
 NDD_DIR="$HOME/ndd/"
-TEST_DIR=$NDD_DIR"test/"
+TEST_DIR="$NDD_DIR"test/
 PORT=3687
 
 hosts=()
@@ -36,6 +36,10 @@ run() {
   slaves=$(get_slaves)
   python ndd_slurm.py -s "$MASTER_IP" -i "$TEST_DIR" -o "$TEST_DIR"\
                       ${slaves[@]} -p "$PORT" -H -r
+  for host in ${hosts[@]}; do
+      echo $host: \
+        $(ssh "$host" tar -c "$TEST_DIR" 2>/dev/null | md5sum | cut -d' ' -f1)
+  done
 }
 
 main() {
