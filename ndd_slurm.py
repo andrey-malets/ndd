@@ -130,7 +130,9 @@ def get_slave_ndd_cmd(args, write_fd=None):
     return cmd
 
 
-def get_ssh_slave_ndd_cmd(args, slave=None, slaves=None, write_fd=None):
+def get_ssh_slave_ndd_cmd(args, write_fd=None):
+    slave = args.c
+    slaves = args.S.split(',')
     cmd = [args.n]
     cmd += get_slave_output_args(args, write_fd)
     index = slaves.index(slave)
@@ -215,9 +217,7 @@ def run_slave(args):
     elif args.r:
         write_fd = run_slave_tar(args, procs)
     if args.H:
-        slave = args.c
-        slaves = args.S.split(',')
-        cmd = get_ssh_slave_ndd_cmd(args, slave, slaves, write_fd)
+        cmd = get_ssh_slave_ndd_cmd(args, write_fd)
     else:
         cmd = get_slave_ndd_cmd(args, write_fd)
     procs.append(init_process(cmd))
