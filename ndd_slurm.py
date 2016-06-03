@@ -228,7 +228,7 @@ def run_master_tar(args, procs):
     read_fd, write_fd = os.pipe()
     procs.append(init_process(['tar', '-c', args.i],
                  write_fd=write_fd))
-    return read_fd, write_fd
+    return read_fd
 
 
 def run_master_comp(args, procs, tar_r):
@@ -239,7 +239,7 @@ def run_master_comp(args, procs, tar_r):
     else:
         procs.append(init_process(['pigz', '--fast', args.i],
                                   write_fd=write_fd))
-    return read_fd, write_fd
+    return read_fd
 
 
 def run_master(args):
@@ -247,11 +247,9 @@ def run_master(args):
     if not (args.r or args.z):
         read_fd = None
     if args.r:
-        tar_r, tar_w = run_master_tar(args, procs)
-        read_fd = tar_r
+        read_fd = run_master_tar(args, procs)
     if args.z:
-        comp_r, comp_w = run_master_comp(args, procs, read_fd)
-        read_fd = comp_r
+        read_fd = run_master_comp(args, procs, read_fd)
     cmds = [get_master_ndd_cmd(args, read_fd)]
     cmds += get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
     procs.extend(map(init_process, cmds))
