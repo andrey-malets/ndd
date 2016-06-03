@@ -188,21 +188,32 @@ def get_slaves(args):
         raise ValueError('one of -D or -d must be specified')
 
 
+def run_slave_tar(args, procs):
+    read_fd, write_fd = os.pipe()
+    procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
+    return write_fd
+
+
+def run_slave_comp(args, procs):
+    read_fd, write_fd = os.pipe()
+    if args.r:
+        tar_w = run_slave_tar(args, procs)
+        procs.append(init_process(['pigz', '-d'], read_fd=read_fd,
+                                  write_fd=tar_w))
+    else:
+        procs.append(init_process(['pigz', '-d'],
+                                  read_fd=read_fd))
+    return write_fd
+
+
 def run_slave(args):
     procs = []
-    if args.z and args.r:
-        pigz_read_fd, pigz_write_fd = os.pipe()
-        read_fd, write_fd = os.pipe()
-        procs.append(init_process(['pigz', '-d'], read_fd=pigz_read_fd,
-                                  write_fd=write_fd))
-        write_fd = pigz_write_fd
-        tar_read_fd, tar_write_fd = os.pipe()
-        procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
-    elif args.r:
-        read_fd, write_fd = os.pipe()
-        procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
-    else:
+    if not (args.r or args.z):
         write_fd = None
+    if args.z:
+        write_fd = run_slave_comp(args, procs)
+    elif args.r:
+        write_fd = run_slave_tar(args, procs)
     if args.H:
         slave = args.c
         slaves = args.S.split(',')
@@ -213,20 +224,34 @@ def run_slave(args):
     return wait(procs)
 
 
+def run_master_tar(args, procs):
+    read_fd, write_fd = os.pipe()
+    procs.append(init_process(['tar', '-c', args.i],
+                 write_fd=write_fd))
+    return read_fd, write_fd
+
+
+def run_master_comp(args, procs, tar_r):
+    read_fd, write_fd = os.pipe()
+    if args.r:
+        procs.append(init_process(['pigz', '--fast'], read_fd=tar_r,
+                                  write_fd=write_fd))
+    else:
+        procs.append(init_process(['pigz', '--fast', args.i],
+                                  write_fd=write_fd))
+    return read_fd, write_fd
+
+
 def run_master(args):
     procs = []
-    if args.r:
-        tar_read_fd, tar_write_fd = os.pipe()
-        procs.append(init_process(['tar', '-c', args.i],
-                     write_fd=tar_write_fd))
-        read_fd = tar_read_fd
-    else:
+    if not (args.r or args.z):
         read_fd = None
+    if args.r:
+        tar_r, tar_w = run_master_tar(args, procs)
+        read_fd = tar_r
     if args.z:
-        pigz_read_fd, pigz_write_fd = os.pipe()
-        procs.append(init_process(['pigz', '--fast'], read_fd=tar_read_fd,
-                                  write_fd=pigz_write_fd))
-        read_fd = pigz_read_fd
+        comp_r, comp_w = run_master_comp(args, procs, read_fd)
+        read_fd = comp_r
     cmds = [get_master_ndd_cmd(args, read_fd)]
     cmds += get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
     procs.extend(map(init_process, cmds))
