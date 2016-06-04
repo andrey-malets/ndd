@@ -192,19 +192,16 @@ def get_slaves(args):
 
 def run_slave_tar(args, procs):
     read_fd, write_fd = os.pipe()
-    procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
+    out_dir = args.o if args.r else '/home/mathcrosp/ndd/test'
+    procs.append(init_process(['tar', '-xC', out_dir], read_fd=read_fd))
     return write_fd
 
 
 def run_slave_comp(args, procs):
     read_fd, write_fd = os.pipe()
-    if args.r:
-        tar_w = run_slave_tar(args, procs)
-        procs.append(init_process(['pigz', '-d'], read_fd=read_fd,
-                                  write_fd=tar_w))
-    else:
-        procs.append(init_process(['pigz', '-d'],
-                                  read_fd=read_fd))
+    tar_w = run_slave_tar(args, procs)
+    procs.append(init_process(['pigz', '-d'], read_fd=read_fd,
+                              write_fd=tar_w))
     return write_fd
 
 
@@ -227,18 +224,15 @@ def run_slave(args):
 def run_master_tar(args, procs):
     read_fd, write_fd = os.pipe()
     procs.append(init_process(['tar', '-c', args.i],
-                 write_fd=write_fd))
+                              write_fd=write_fd))
     return read_fd
 
 
-def run_master_comp(args, procs, tar_r):
+def run_master_comp(args, procs):
     read_fd, write_fd = os.pipe()
-    if args.r:
-        procs.append(init_process(['pigz', '--fast'], read_fd=tar_r,
-                                  write_fd=write_fd))
-    else:
-        procs.append(init_process(['pigz', '--fast', args.i],
-                                  write_fd=write_fd))
+    tar_r = run_master_tar(args, procs)
+    procs.append(init_process(['pigz', '--fast'], read_fd=tar_r,
+                              write_fd=write_fd))
     return read_fd
 
 
@@ -246,10 +240,10 @@ def run_master(args):
     procs = []
     if not (args.r or args.z):
         read_fd = None
-    if args.r:
-        read_fd = run_master_tar(args, procs)
     if args.z:
-        read_fd = run_master_comp(args, procs, read_fd)
+        read_fd = run_master_comp(args, procs)
+    elif args.r:
+        read_fd = run_master_tar(args, procs)
     cmds = [get_master_ndd_cmd(args, read_fd)]
     cmds += get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
     procs.extend(map(init_process, cmds))
