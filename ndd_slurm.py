@@ -192,16 +192,20 @@ def get_slaves(args):
 
 def run_slave_tar(args, procs):
     read_fd, write_fd = os.pipe()
-    out_dir = args.o if args.r else '/home/mathcrosp/ndd/test'
-    procs.append(init_process(['tar', '-xC', out_dir], read_fd=read_fd))
+    procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
     return write_fd
 
 
 def run_slave_comp(args, procs):
     read_fd, write_fd = os.pipe()
-    tar_w = run_slave_tar(args, procs)
-    procs.append(init_process(['pigz', '-d'], read_fd=read_fd,
-                              write_fd=tar_w))
+    if args.r:
+        tar_w = run_slave_tar(args, procs)
+        procs.append(init_process(['pigz', '-d'], read_fd=read_fd,
+                                  write_fd=tar_w))
+    else:
+        out_fd = os.open(args.o, os.O_CREAT | os.O_WRONLY)
+        procs.append(init_process(['pigz', '-dc'], read_fd=read_fd,
+                                  write_fd=out_fd))
     return write_fd
 
 
@@ -230,9 +234,14 @@ def run_master_tar(args, procs):
 
 def run_master_comp(args, procs):
     read_fd, write_fd = os.pipe()
-    tar_r = run_master_tar(args, procs)
-    procs.append(init_process(['pigz', '--fast'], read_fd=tar_r,
-                              write_fd=write_fd))
+    if args.r:
+        tar_r = run_master_tar(args, procs)
+        procs.append(init_process(['pigz', '--fast'], read_fd=tar_r,
+                                  write_fd=write_fd))
+    else:
+        in_fd = os.open(args.i, os.O_RDONLY)
+        procs.append(init_process(['pigz', '--fast', '-c'], read_fd=in_fd,
+                                  write_fd=write_fd))
     return read_fd
 
 
