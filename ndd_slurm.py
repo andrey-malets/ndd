@@ -69,7 +69,7 @@ def get_slave_parser():
 
 def get_master_input_args(args, read_fd):
     if read_fd:
-        cmd = ['-I', '/dev/fd/{}'.format(read_fd)]
+        cmd = ['-I', '/dev/stdin']
     else:
         cmd = ['-i', args.i]
     return cmd
@@ -77,7 +77,7 @@ def get_master_input_args(args, read_fd):
 
 def get_slave_output_args(args, write_fd):
     if write_fd:
-        cmd = ['-O', '/dev/fd/{}'.format(write_fd)]
+        cmd = ['-O', '/dev/stdout']
     else:
         cmd = ['-o', args.o]
     return cmd
@@ -221,7 +221,7 @@ def run_slave(args):
         cmd = get_ssh_slave_ndd_cmd(args, write_fd)
     else:
         cmd = get_slave_ndd_cmd(args, write_fd)
-    procs.append(init_process(cmd))
+    procs.append(init_process(cmd, write_fd=write_fd))
     return wait(procs)
 
 
@@ -253,8 +253,9 @@ def run_master(args):
         read_fd = run_master_comp(args, procs)
     elif args.r:
         read_fd = run_master_tar(args, procs)
-    cmds = [get_master_ndd_cmd(args, read_fd)]
-    cmds += get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
+    master_cmd = get_master_ndd_cmd(args, read_fd)
+    procs.append(init_process(master_cmd, read_fd=read_fd))
+    cmds = get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
     procs.extend(map(init_process, cmds))
     return wait(procs)
 
@@ -262,11 +263,14 @@ def run_master(args):
 def init_process(cmd, read_fd=None, write_fd=None):
     if read_fd and write_fd:
         process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd),
-                                   stdout=os.fdopen(write_fd, 'w'))
+                                   stdout=os.fdopen(write_fd, 'w'),
+                                   close_fds=True)
     elif read_fd:
-        process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd))
+        process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd),
+                                   close_fds=True)
     elif write_fd:
-        process = subprocess.Popen(cmd, stdout=os.fdopen(write_fd, 'w'))
+        process = subprocess.Popen(cmd, stdout=os.fdopen(write_fd, 'w'),
+                                   close_fds=True)
     else:
         process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         process.stdin.close()
