@@ -188,7 +188,7 @@ def start_slave_tar(args, procs):
     return write_fd
 
 
-def start_slave_compressor(output_fd, procs):
+def start_slave_decompressor(output_fd, procs):
     read_fd, write_fd = os.pipe()
     procs.append(init_process(['pigz', '-d'], read_fd=read_fd,
                               write_fd=output_fd))
@@ -201,7 +201,7 @@ def start_slave_unpack(args, procs):
     else:
         write_fd = os.open(args.o, os.O_CREAT | os.O_WRONLY)
     if args.z:
-        write_fd = start_slave_compressor(write_fd, procs)
+        write_fd = start_slave_decompressor(write_fd, procs)
     return write_fd
 
 
