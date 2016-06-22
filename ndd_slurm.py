@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 import argparse
 import os
@@ -184,7 +185,8 @@ def get_slaves(args):
 
 def start_slave_tar(args, procs):
     read_fd, write_fd = os.pipe()
-    procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
+    procs.append(init_process(['tar', '-C', args.o, '-x', '-f', '-'],
+                              read_fd=read_fd))
     return write_fd
 
 
@@ -221,7 +223,7 @@ def run_slave(args):
 
 def start_master_tar(args, procs):
     read_fd, write_fd = os.pipe()
-    procs.append(init_process(['tar', '-c', args.i],
+    procs.append(init_process(['tar', '-C', args.i, '-с', '.', '-f', '-'],
                               write_fd=write_fd))
     return read_fd
 
