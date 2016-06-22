@@ -223,7 +223,7 @@ def run_slave(args):
 
 def start_master_tar(args, procs):
     read_fd, write_fd = os.pipe()
-    procs.append(init_process(['tar', '-C', args.i, '-с', '.', '-f', '-'],
+    procs.append(init_process(['tar', '-C', args.i, '-f', '-', '-c', '.'],
                               write_fd=write_fd))
     return read_fd
 
