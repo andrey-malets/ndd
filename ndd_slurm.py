@@ -34,6 +34,8 @@ def add_common_options(parser):
         '-H', action='store_true', help='use ssh, not SLURM')
     parser.add_argument(
         '-r', action='store_true', help='specify that input is a directory')
+    parser.add_argument(
+        '-z', action='store_true', help='enable compression with pigz')
 
 
 def add_master_options(parser):
@@ -65,20 +67,12 @@ def get_slave_parser():
     return parser
 
 
-def get_master_input_args(args, read_fd):
-    if read_fd:
-        cmd = ['-I', '/dev/fd/{}'.format(read_fd)]
-    else:
-        cmd = ['-i', args.i]
-    return cmd
+def get_master_input_args(ndd_input):
+    return ['-i', ndd_input] if ndd_input else ['-I', '/dev/stdin']
 
 
-def get_slave_output_args(args, write_fd):
-    if write_fd:
-        cmd = ['-O', '/dev/fd/{}'.format(write_fd)]
-    else:
-        cmd = ['-o', args.o]
-    return cmd
+def get_slave_output_args(ndd_output):
+    return ['-o', ndd_output] if ndd_output else ['-O', '/dev/stdout']
 
 
 def get_source_for_slave(args, slaves):
@@ -109,13 +103,15 @@ def get_slave_cmd(args, slave=None, slaves=None, spec=None):
         cmd += ['-c', slave, '-H']
     if args.r:
         cmd += ['-r']
+    if args.z:
+        cmd += ['-z']
     put_non_required_options(args, cmd)
     return cmd
 
 
 def get_slave_ndd_cmd(args, write_fd=None):
     cmd = [args.n]
-    cmd += get_slave_output_args(args, write_fd)
+    cmd += get_slave_output_args(None if write_fd else args.o)
     slaves = args.S.split(',')
     index, source = get_source_for_slave(args, slaves)
     cmd += ['-r', '{}:{}'.format(source, args.p)]
@@ -126,9 +122,11 @@ def get_slave_ndd_cmd(args, write_fd=None):
     return cmd
 
 
-def get_ssh_slave_ndd_cmd(args, slave=None, slaves=None, write_fd=None):
+def get_ssh_slave_ndd_cmd(args, write_fd=None):
+    slave = args.c
+    slaves = args.S.split(',')
     cmd = [args.n]
-    cmd += get_slave_output_args(args, write_fd)
+    cmd += get_slave_output_args(None if write_fd else args.o)
     index = slaves.index(slave)
     source = args.s if index == 0 else slaves[index-1]
     cmd += ['-r', '{}:{}'.format(get_host(source), args.p)]
@@ -140,7 +138,7 @@ def get_ssh_slave_ndd_cmd(args, slave=None, slaves=None, write_fd=None):
 
 def get_master_ndd_cmd(args, read_fd=None):
     cmd = [args.n]
-    cmd += get_master_input_args(args, read_fd)
+    cmd += get_master_input_args(None if read_fd else args.i)
     cmd += ['-s', '{}:{}'.format(args.s, args.p)]
     put_non_required_options(args, cmd)
     return cmd
@@ -184,42 +182,88 @@ def get_slaves(args):
         raise ValueError('one of -D or -d must be specified')
 
 
+def start_slave_tar(args, procs):
+    read_fd, write_fd = os.pipe()
+    procs.append(init_process(['tar', '-C', args.o, '-x', '-f', '-'],
+                              read_fd=read_fd))
+    return write_fd
+
+
+def start_slave_decompressor(output_fd, procs):
+    read_fd, write_fd = os.pipe()
+    procs.append(init_process(['pigz', '-d'], read_fd=read_fd,
+                              write_fd=output_fd))
+    return write_fd
+
+
+def start_slave_unpack(args, procs):
+    if args.r:
+        write_fd = start_slave_tar(args, procs)
+    else:
+        write_fd = os.open(args.o, os.O_CREAT | os.O_WRONLY)
+    if args.z:
+        write_fd = start_slave_decompressor(write_fd, procs)
+    return write_fd
+
+
 def run_slave(args):
     procs = []
-    if args.r:
-        read_fd, write_fd = os.pipe()
-        procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
+    if args.r or args.z:
+        write_fd = start_slave_unpack(args, procs)
     else:
         write_fd = None
     if args.H:
-        slave = args.c
-        slaves = args.S.split(',')
-        cmd = get_ssh_slave_ndd_cmd(args, slave, slaves, write_fd)
+        cmd = get_ssh_slave_ndd_cmd(args, write_fd)
     else:
         cmd = get_slave_ndd_cmd(args, write_fd)
-    procs.append(init_process(cmd))
+    procs.append(init_process(cmd, write_fd=write_fd))
     return wait(procs)
+
+
+def start_master_tar(args, procs):
+    read_fd, write_fd = os.pipe()
+    procs.append(init_process(['tar', '-C', args.i, '-f', '-', '-c', '.'],
+                              write_fd=write_fd))
+    return read_fd
+
+
+def start_master_compressor(input_fd, procs):
+    read_fd, write_fd = os.pipe()
+    procs.append(init_process(['pigz', '--fast'], read_fd=input_fd,
+                              write_fd=write_fd))
+    return read_fd
+
+
+def start_master_pack(args, procs):
+    if args.r:
+        read_fd = start_master_tar(args, procs)
+    else:
+        read_fd = os.open(args.i, os.O_RDONLY)
+    if args.z:
+        read_fd = start_master_compressor(read_fd, procs)
+    return read_fd
 
 
 def run_master(args):
     procs = []
-    if args.r:
-        read_fd, write_fd = os.pipe()
-        procs.append(init_process(['tar', '-c', args.i], write_fd=write_fd))
+    if args.r or args.z:
+        read_fd = start_master_pack(args, procs)
     else:
         read_fd = None
-    cmds = [get_master_ndd_cmd(args, read_fd)]
-    cmds += get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
-    procs.extend(map(init_process, cmds))
+    master_cmd = get_master_ndd_cmd(args, read_fd)
+    procs.append(init_process(master_cmd, read_fd=read_fd))
+    slave_control_cmds = get_ssh_cmds(args) if args.H\
+                                            else [get_srun_cmd(args)]
+    procs.extend(map(init_process, slave_control_cmds))
     return wait(procs)
 
 
 def init_process(cmd, read_fd=None, write_fd=None):
-    assert not (read_fd and write_fd)
-    if read_fd is not None:
-        process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd))
-    elif write_fd is not None:
-        process = subprocess.Popen(cmd, stdout=os.fdopen(write_fd, 'w'))
+    if read_fd or write_fd:
+        stdin = os.fdopen(read_fd) if read_fd else None
+        stdout = os.fdopen(write_fd, 'w') if write_fd else None
+        process = subprocess.Popen(cmd, stdin=stdin, stdout=stdout,
+                                   close_fds=True)
     else:
         process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         process.stdin.close()
