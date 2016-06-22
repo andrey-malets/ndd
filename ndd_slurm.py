@@ -192,25 +192,29 @@ def start_slave_tar(args, procs):
     return write_fd
 
 
-def start_slave_pack(args, procs):
+def start_slave_compressor(output_fd, procs):
     read_fd, write_fd = os.pipe()
-    if args.r:
-        out_fd = start_slave_tar(args, procs)
-    else:
-        out_fd = os.open(args.o, os.O_CREAT | os.O_WRONLY)
     procs.append(init_process(['pigz', '-d'], read_fd=read_fd,
-                              write_fd=out_fd))
+                              write_fd=output_fd))
+    return write_fd
+
+
+def start_slave_unpack(args, procs):
+    if args.r:
+        write_fd = start_slave_tar(args, procs)
+    else:
+        write_fd = os.open(args.o, os.O_CREAT | os.O_WRONLY)
+    if args.z:
+        write_fd = start_slave_compressor(write_fd, procs)
     return write_fd
 
 
 def run_slave(args):
     procs = []
-    if not (args.r or args.z):
+    if args.r or args.z:
+        write_fd = start_slave_unpack(args, procs)
+    else:
         write_fd = None
-    if args.z:
-        write_fd = start_slave_pack(args, procs)
-    elif args.r:
-        write_fd = start_slave_tar(args, procs)
     if args.H:
         cmd = get_ssh_slave_ndd_cmd(args, write_fd)
     else:
@@ -226,25 +230,29 @@ def start_master_tar(args, procs):
     return read_fd
 
 
-def start_master_pack(args, procs):
+def start_master_compressor(input_fd, procs):
     read_fd, write_fd = os.pipe()
-    if args.r:
-        in_fd = start_master_tar(args, procs)
-    else:
-        in_fd = os.open(args.i, os.O_RDONLY)
-    procs.append(init_process(['pigz', '--fast'], read_fd=in_fd,
+    procs.append(init_process(['pigz', '--fast'], read_fd=input_fd,
                               write_fd=write_fd))
+    return read_fd
+
+
+def start_master_pack(args, procs):
+    if args.r:
+        read_fd = start_master_tar(args, procs)
+    else:
+        read_fd = os.open(args.i, os.O_RDONLY)
+    if args.z:
+        read_fd = start_master_compressor(read_fd, procs)
     return read_fd
 
 
 def run_master(args):
     procs = []
-    if not (args.r or args.z):
-        read_fd = None
-    if args.z:
+    if args.r or args.z:
         read_fd = start_master_pack(args, procs)
-    elif args.r:
-        read_fd = start_master_tar(args, procs)
+    else:
+        read_fd = None
     master_cmd = get_master_ndd_cmd(args, read_fd)
     procs.append(init_process(master_cmd, read_fd=read_fd))
     slave_control_cmds = get_ssh_cmds(args) if args.H\
