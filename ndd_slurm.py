@@ -71,12 +71,8 @@ def get_master_input_args(ndd_input):
     return ['-i', ndd_input] if ndd_input else ['-I', '/dev/stdin']
 
 
-def get_slave_output_args(args, write_fd):
-    if write_fd:
-        cmd = ['-O', '/dev/stdout']
-    else:
-        cmd = ['-o', args.o]
-    return cmd
+def get_slave_output_args(ndd_output):
+    return ['-o', ndd_output] if ndd_output else ['-O', '/dev/stdout']
 
 
 def get_source_for_slave(args, slaves):
@@ -115,7 +111,7 @@ def get_slave_cmd(args, slave=None, slaves=None, spec=None):
 
 def get_slave_ndd_cmd(args, write_fd=None):
     cmd = [args.n]
-    cmd += get_slave_output_args(args, write_fd)
+    cmd += get_slave_output_args(None if write_fd else args.o)
     slaves = args.S.split(',')
     index, source = get_source_for_slave(args, slaves)
     cmd += ['-r', '{}:{}'.format(source, args.p)]
@@ -130,7 +126,7 @@ def get_ssh_slave_ndd_cmd(args, write_fd=None):
     slave = args.c
     slaves = args.S.split(',')
     cmd = [args.n]
-    cmd += get_slave_output_args(args, write_fd)
+    cmd += get_slave_output_args(None if write_fd else args.o)
     index = slaves.index(slave)
     source = args.s if index == 0 else slaves[index-1]
     cmd += ['-r', '{}:{}'.format(get_host(source), args.p)]
