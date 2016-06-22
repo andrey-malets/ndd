@@ -67,12 +67,8 @@ def get_slave_parser():
     return parser
 
 
-def get_master_input_args(args, read_fd):
-    if read_fd:
-        cmd = ['-I', '/dev/stdin']
-    else:
-        cmd = ['-i', args.i]
-    return cmd
+def get_master_input_args(ndd_input):
+    return ['-i', ndd_input] if ndd_input else ['-I', '/dev/stdin']
 
 
 def get_slave_output_args(args, write_fd):
@@ -146,7 +142,7 @@ def get_ssh_slave_ndd_cmd(args, write_fd=None):
 
 def get_master_ndd_cmd(args, read_fd=None):
     cmd = [args.n]
-    cmd += get_master_input_args(args, read_fd)
+    cmd += get_master_input_args(None if read_fd else args.i)
     cmd += ['-s', '{}:{}'.format(args.s, args.p)]
     put_non_required_options(args, cmd)
     return cmd
@@ -190,22 +186,20 @@ def get_slaves(args):
         raise ValueError('one of -D or -d must be specified')
 
 
-def run_slave_tar(args, procs):
+def start_slave_tar(args, procs):
     read_fd, write_fd = os.pipe()
     procs.append(init_process(['tar', '-xC', args.o], read_fd=read_fd))
     return write_fd
 
 
-def run_slave_comp(args, procs):
+def start_slave_pack(args, procs):
     read_fd, write_fd = os.pipe()
     if args.r:
-        tar_w = run_slave_tar(args, procs)
-        procs.append(init_process(['pigz', '-d'], read_fd=read_fd,
-                                  write_fd=tar_w))
+        out_fd = start_slave_tar(args, procs)
     else:
         out_fd = os.open(args.o, os.O_CREAT | os.O_WRONLY)
-        procs.append(init_process(['pigz', '-dc'], read_fd=read_fd,
-                                  write_fd=out_fd))
+    procs.append(init_process(['pigz', '-d'], read_fd=read_fd,
+                              write_fd=out_fd))
     return write_fd
 
 
@@ -214,9 +208,9 @@ def run_slave(args):
     if not (args.r or args.z):
         write_fd = None
     if args.z:
-        write_fd = run_slave_comp(args, procs)
+        write_fd = start_slave_pack(args, procs)
     elif args.r:
-        write_fd = run_slave_tar(args, procs)
+        write_fd = start_slave_tar(args, procs)
     if args.H:
         cmd = get_ssh_slave_ndd_cmd(args, write_fd)
     else:
@@ -225,23 +219,21 @@ def run_slave(args):
     return wait(procs)
 
 
-def run_master_tar(args, procs):
+def start_master_tar(args, procs):
     read_fd, write_fd = os.pipe()
     procs.append(init_process(['tar', '-c', args.i],
                               write_fd=write_fd))
     return read_fd
 
 
-def run_master_comp(args, procs):
+def start_master_pack(args, procs):
     read_fd, write_fd = os.pipe()
     if args.r:
-        tar_r = run_master_tar(args, procs)
-        procs.append(init_process(['pigz', '--fast'], read_fd=tar_r,
-                                  write_fd=write_fd))
+        in_fd = start_master_tar(args, procs)
     else:
         in_fd = os.open(args.i, os.O_RDONLY)
-        procs.append(init_process(['pigz', '--fast', '-c'], read_fd=in_fd,
-                                  write_fd=write_fd))
+    procs.append(init_process(['pigz', '--fast'], read_fd=in_fd,
+                              write_fd=write_fd))
     return read_fd
 
 
@@ -250,26 +242,22 @@ def run_master(args):
     if not (args.r or args.z):
         read_fd = None
     if args.z:
-        read_fd = run_master_comp(args, procs)
+        read_fd = start_master_pack(args, procs)
     elif args.r:
-        read_fd = run_master_tar(args, procs)
+        read_fd = start_master_tar(args, procs)
     master_cmd = get_master_ndd_cmd(args, read_fd)
     procs.append(init_process(master_cmd, read_fd=read_fd))
-    cmds = get_ssh_cmds(args) if args.H else [get_srun_cmd(args)]
-    procs.extend(map(init_process, cmds))
+    slave_control_cmds = get_ssh_cmds(args) if args.H\
+                                            else [get_srun_cmd(args)]
+    procs.extend(map(init_process, slave_control_cmds))
     return wait(procs)
 
 
 def init_process(cmd, read_fd=None, write_fd=None):
-    if read_fd and write_fd:
-        process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd),
-                                   stdout=os.fdopen(write_fd, 'w'),
-                                   close_fds=True)
-    elif read_fd:
-        process = subprocess.Popen(cmd, stdin=os.fdopen(read_fd),
-                                   close_fds=True)
-    elif write_fd:
-        process = subprocess.Popen(cmd, stdout=os.fdopen(write_fd, 'w'),
+    if read_fd or write_fd:
+        stdin = os.fdopen(read_fd) if read_fd else None
+        stdout = os.fdopen(write_fd, 'w') if write_fd else None
+        process = subprocess.Popen(cmd, stdin=stdin, stdout=stdout,
                                    close_fds=True)
     else:
         process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
