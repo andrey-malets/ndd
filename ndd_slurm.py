@@ -246,6 +246,9 @@ def start_master_pack(args, procs):
 
 def run_master(args):
     procs = []
+    if args.H and not args.d:
+        warnings.warn('at least one slave is required')
+        return 1
     if args.r or args.z:
         read_fd = start_master_pack(args, procs)
     else:
