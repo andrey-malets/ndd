@@ -10,8 +10,8 @@ import warnings
 
 def itervalues(d):
     if sys.version_info[0] == 2:
-        return dictionary.itervalues()
-    return iter(dictionary.values())
+        return d.itervalues()
+    return iter(d.values())
 
 
 def add_non_required_options(parser):
