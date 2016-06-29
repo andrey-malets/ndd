@@ -8,6 +8,12 @@ import sys
 import warnings
 
 
+def itervalues(d):
+    if sys.version_info[0] == 2:
+        return d.itervalues()
+    return iter(d.values())
+
+
 def add_non_required_options(parser):
     parser.add_argument('-n', metavar='NDD', help='path to ndd', default='ndd')
     parser.add_argument('-B', metavar='BUFFER', help='buffer size')
@@ -97,7 +103,7 @@ def get_slave_cmd(args, slave=None, slaves=None, spec=None):
     if spec is None:
         spec = ','.join(slaves)
     cmd = [sys.executable, os.path.abspath(__file__),
-           '-S', spec, '-n', args.n, '-s', args.s,\
+           '-S', spec, '-n', args.n, '-s', args.s,
            '-o', args.o, '-p', args.p]
     if args.H:
         cmd += ['-c', slave, '-H']
@@ -157,20 +163,20 @@ def get_srun_cmd(args):
 def get_ssh_cmds(args):
     SSH = ['ssh', '-tt', '-o', 'PasswordAuthentication=no']
     slaves = args.d
-    cmds = [(SSH + [slave] + get_slave_cmd(args, slave=slave, slaves=slaves))\
+    cmds = [(SSH + [slave] + get_slave_cmd(args, slave=slave, slaves=slaves))
             for slave in slaves]
     return cmds
 
 
 def get_host(source):
-    return source[source.index('@')+1:] if '@' in source else source
+    return source[source.find('@')+1:]
 
 
 def get_idle_nodes(partition):
     assert partition
     res = subprocess.check_output(
         ['sinfo', '-p', partition, '-t', 'idle', '-h', '-o' '%n'])
-    return res.strip().split('\n')
+    return res.strip().split(b'\n')
 
 
 def get_slaves(args):
@@ -276,7 +282,7 @@ def init_process(cmd, read_fd=None, write_fd=None):
 def wait(procs):
     proc_map = {proc.pid: proc for proc in procs}
     def kill():
-        for proc in proc_map.itervalues():
+        for proc in itervalues(proc_map):
             if proc.poll() is None:
                 try:
                     proc.terminate()
@@ -296,7 +302,7 @@ def wait(procs):
 
 
 def main(raw_args):
-    if len(raw_args) > 0 and raw_args[0] == '-S':
+    if raw_args and raw_args[0] == '-S':
         return run_slave(get_slave_parser().parse_args(raw_args))
     else:
         return run_master(get_master_parser().parse_args(raw_args))
