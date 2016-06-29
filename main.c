@@ -69,7 +69,7 @@ int main(int argc, char *argv[]) {
 
 #define FAIL_IF_NOT(cond, alert) CHECK(cond, alert, GOTO_WITH(cleanup, rv, 1))
 
-  for (int opt; (opt = getopt(argc, argv, "B:b:i:o:I:O:r:s:S:t:")) != -1;) {
+  for (int opt; (opt = getopt(argc, argv, "B:b:i:o:I:O:r:s:S:")) != -1;) {
     switch (opt) {
     case 'B':
     case 'b': {
