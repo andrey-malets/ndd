@@ -56,13 +56,13 @@ def add_slave_options(parser):
 
 
 def get_master_parser():
-    parser = argparse.ArgumentParser('run ndd with SLURM')
+    parser = argparse.ArgumentParser('run ndd with ssh')
     add_master_options(parser)
     return parser
 
 
 def get_slave_parser():
-    parser = argparse.ArgumentParser('run ndd with SLURM (slave mode)')
+    parser = argparse.ArgumentParser('run ndd with ssh (slave mode)')
     add_slave_options(parser)
     return parser
 
