@@ -229,15 +229,12 @@ def ssh(host):
 
 def run_master(args):
     procs = []
-    if args.local:
-        source_cmd = get_slave_cmd(
-            args, input_=args.input, send=get_host(args.source))
-    else:
-        source_cmd = ssh(args.source) + get_slave_cmd(
-            args, input_=args.input, send=get_host(args.source))
-    procs.append(init_process(source_cmd))
+    source_cmd = get_slave_cmd(
+        args, input_=args.input, send=get_host(args.source))
+    procs.append(init_process(source_cmd if args.local
+                 else ssh(args.source) + source_cmd))
     for i, destination in enumerate(args.destination):
-        receive = get_host(args.source if i == 0 else args.destination[i-1])
+        receive = get_host(args.source if i == 0 else args.destination[i - 1])
         send = (
             get_host(args.destination[i]) if i != len(args.destination) - 1
             else None
