@@ -95,7 +95,7 @@ def init_process(cmd, read_fd=None, write_fd=None):
 def wait(procs):
     proc_map = {proc.pid: proc for proc in procs}
     def kill():
-        for proc in proc_map.itervalues():
+        for proc in proc_map.values():
             if proc.poll() is None:
                 try:
                     proc.terminate()
