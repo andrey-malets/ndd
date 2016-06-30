@@ -232,7 +232,7 @@ def run_master(args):
     source_cmd = get_slave_cmd(
         args, input_=args.input, send=get_host(args.source))
     procs.append(init_process(source_cmd if args.local
-                 else ssh(args.source) + source_cmd))
+                              else ssh(args.source) + source_cmd))
     for i, destination in enumerate(args.destination):
         receive = get_host(args.source if i == 0 else args.destination[i - 1])
         send = (
