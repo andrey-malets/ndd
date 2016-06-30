@@ -220,7 +220,7 @@ def run_slave(args):
 
 
 def get_host(source):
-    return source[source.index('@')+1:] if '@' in source else source
+    return source[source.find('@')+1:]
 
 
 def ssh(host):
