@@ -4,7 +4,7 @@
 #define DEFAULT_BLOCK_SIZE   (8*1024*1024)
 #define DEFAULT_LO_WATERMARK (8*1024*1024)
 
-#define MAX_CONSUMERS 2
+#define MAX_CONSUMERS 10
 
 #define DEFAULT_PORT "3634"
 static const unsigned int CONNECT_BACKOFF[] = {0, 1, 3, 5};
