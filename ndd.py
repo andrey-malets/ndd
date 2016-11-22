@@ -62,7 +62,7 @@ def add_slave_options(parser):
 
 
 def get_master_parser():
-    parser = argparse.ArgumentParser('run ndd with ssh')
+    parser = argparse.ArgumentParser(description='run ndd with ssh')
     add_master_options(parser)
     return parser
 
