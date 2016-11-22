@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
 import argparse
+import contextlib
+import fcntl
 import os
 import subprocess
 import sys
@@ -14,6 +16,10 @@ def put_non_required_options(args, cmdline):
 
 
 def add_common_options(parser):
+    parser.add_argument('-li', '--lock-input', metavar='LOCKFILE',
+                        help='file to lock on source for reading')
+    parser.add_argument('-lo', '--lock-output', metavar='LOCKFILE',
+                        help='file to lock on destination(s) for writing')
     parser.add_argument('-n', '--ndd', metavar='NDD',
                         help='path to alternate ndd binary', default='ndd')
     parser.add_argument('-B', '--buffer',
@@ -48,7 +54,7 @@ def add_slave_options(parser):
     parser.add_argument('-i', '--input', metavar='INPUT',
                         help='input file on source')
     parser.add_argument('-o', '--output', metavar='OUTPUT',
-                        help='input file on source')
+                        help='output on destination')
     parser.add_argument('-S', '--send', metavar='ADDR',
                         help='address to listen on')
     parser.add_argument('-R', '--receive', metavar='ADDR',
@@ -67,7 +73,8 @@ def get_slave_parser():
     return parser
 
 
-def get_slave_cmd(args, input_=None, output=None, receive=None, send=None):
+def get_slave_cmd(
+        args, input_=None, output=None, receive=None, send=None, lock=True):
     cmd = [sys.executable, os.path.abspath(__file__),
            '--slave', '--ndd', args.ndd, '--port', args.port]
     put_non_required_options(args, cmd)
@@ -77,6 +84,9 @@ def get_slave_cmd(args, input_=None, output=None, receive=None, send=None):
     if output: cmd += ['--output', output]
     if receive: cmd += ['--receive', receive]
     if send: cmd += ['--send', send]
+    if lock:
+        if args.lock_input: cmd += ['--lock-input', args.lock_input]
+        if args.lock_output: cmd += ['--lock-output', args.lock_output]
     return cmd
 
 
@@ -112,6 +122,41 @@ def wait(procs):
             kill()
             return 1
     return 0
+
+
+@contextlib.contextmanager
+def locked(lockfile, write=False):
+    fd = None
+    try:
+        fd = os.open(lockfile, os.O_RDONLY | os.O_CREAT if write
+                     else os.O_RDONLY)
+        fcntl.flock(
+            fd, (fcntl.LOCK_EX if write else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+        yield
+    finally:
+        if fd:
+            os.close(fd)
+
+
+@contextlib.contextmanager
+def locked_on_master(args):
+    if args.local and args.lock_input:
+        with locked(args.lock_input):
+            yield
+    else:
+        yield
+
+
+@contextlib.contextmanager
+def locked_on_slave(args):
+    if args.input and args.lock_input:
+        with locked(args.lock_input):
+            yield
+    elif args.output and args.lock_output:
+        with locked(args.lock_output, write=True):
+            yield
+    else:
+        yield
 
 
 def start_source_tar(args, procs):
@@ -216,7 +261,8 @@ def run_slave(args):
     assert not(args.input and args.output) and \
         (args.input or args.output), \
         'exactly one of input and output is required'
-    return run_source(args) if args.input else run_destination(args)
+    with locked_on_slave(args):
+        return run_source(args) if args.input else run_destination(args)
 
 
 def get_host(source):
@@ -230,19 +276,23 @@ def ssh(host):
 def run_master(args):
     procs = []
     source_cmd = get_slave_cmd(
-        args, input_=args.input, send=get_host(args.source))
-    procs.append(init_process(source_cmd if args.local
-                              else ssh(args.source) + source_cmd))
-    for i, destination in enumerate(args.destination):
-        receive = get_host(args.source if i == 0 else args.destination[i - 1])
-        send = (
-            get_host(args.destination[i]) if i != len(args.destination) - 1
-            else None
-        )
-        destination_cmd = ssh(destination) + get_slave_cmd(
-            args, output=args.output, receive=receive, send=send)
-        procs.append(init_process(destination_cmd))
-    return wait(procs)
+        args, input_=args.input, send=get_host(args.source),
+        lock=not args.local)
+    with locked_on_master(args):
+        procs.append(init_process(source_cmd if args.local
+                                  else ssh(args.source) + source_cmd))
+        for i, destination in enumerate(args.destination):
+            receive = get_host(
+                args.source if i == 0 else args.destination[i - 1]
+            )
+            send = (
+                get_host(args.destination[i]) if i != len(args.destination) - 1
+                else None
+            )
+            destination_cmd = ssh(destination) + get_slave_cmd(
+                args, output=args.output, receive=receive, send=send)
+            procs.append(init_process(destination_cmd))
+        return wait(procs)
 
 
 def main(raw_args):
