@@ -27,7 +27,8 @@ def add_common_options(parser):
     parser.add_argument('-b', '--block',
                         metavar='SIZE', help='block size')
     parser.add_argument('-p', '--port', metavar='PORT', default='3634',
-                        help='alternate port for communication (default: 3634)')
+                        help='alternate port for communication '
+                             '(default: 3634)')
     parser.add_argument('-r', '--recursive', action='store_true',
                         help='specify that input is a directory')
     parser.add_argument('-z', '--compress', action='store_true',
@@ -78,15 +79,21 @@ def get_slave_cmd(
     cmd = [sys.executable, os.path.abspath(__file__),
            '--slave', '--ndd', args.ndd, '--port', args.port]
     put_non_required_options(args, cmd)
-    if args.recursive: cmd += ['--recursive']
-    if args.compress: cmd += ['--compress']
-    if input_: cmd += ['--input', input_]
-    if output: cmd += ['--output', output]
-    if receive: cmd += ['--receive', receive]
-    if send: cmd += ['--send', send]
+
+    def add_opt(cmd, arg, optname, as_value=False):
+        if arg:
+            cmd += [optname, arg] if as_value else [optname]
+
+    add_opt(cmd, args.recursive, '--recursive')
+    add_opt(cmd, args.compress, '--compress')
+
+    add_opt(cmd, input_, '--input', as_value=True)
+    add_opt(cmd, output, '--output', as_value=True)
+    add_opt(cmd, receive, '--receive', as_value=True)
+    add_opt(cmd, send, '--send', as_value=True)
     if lock:
-        if args.lock_input: cmd += ['--lock-input', args.lock_input]
-        if args.lock_output: cmd += ['--lock-output', args.lock_output]
+        add_opt(cmd, args.lock_input, '--lock-input', as_value=True)
+        add_opt(cmd, args.lock_output, '--lock-output', as_value=True)
     return cmd
 
 
@@ -104,13 +111,14 @@ def init_process(cmd, read_fd=None, write_fd=None):
 
 def wait(procs):
     proc_map = {proc.pid: proc for proc in procs}
+
     def kill():
         for proc in proc_map.values():
             if proc.poll() is None:
                 try:
                     proc.terminate()
                     proc.wait()
-                except:
+                except Exception:
                     pass
 
     for _ in proc_map:
