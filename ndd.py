@@ -48,6 +48,8 @@ def add_master_options(parser):
     parser.add_argument('-d', '--destination', metavar='DEST',
                         help='destination machine(s)', action='append',
                         required=True)
+    parser.add_argument('-X', metavar='SSH_ARG', action='append', default=[],
+                        help='Additional option(s) to pass to ssh')
 
 
 def add_slave_options(parser):
@@ -277,8 +279,8 @@ def get_host(source):
     return source[source.find('@')+1:]
 
 
-def ssh(host):
-    return ['ssh', '-tt', '-o', 'PasswordAuthentication=no', host]
+def ssh(host, args):
+    return ['ssh', '-tt', '-o', 'PasswordAuthentication=no'] + args + [host]
 
 
 def run_master(args):
@@ -288,7 +290,7 @@ def run_master(args):
         lock=not args.local)
     with locked_on_master(args):
         procs.append(init_process(source_cmd if args.local
-                                  else ssh(args.source) + source_cmd))
+                                  else ssh(args.source, args.X) + source_cmd))
         for i, destination in enumerate(args.destination):
             receive = get_host(
                 args.source if i == 0 else args.destination[i - 1]
@@ -297,7 +299,7 @@ def run_master(args):
                 get_host(args.destination[i]) if i != len(args.destination) - 1
                 else None
             )
-            destination_cmd = ssh(destination) + get_slave_cmd(
+            destination_cmd = ssh(destination, args.X) + get_slave_cmd(
                 args, output=args.output, receive=receive, send=send)
             procs.append(init_process(destination_cmd))
         return wait(procs)
