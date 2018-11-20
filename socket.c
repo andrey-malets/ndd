@@ -79,20 +79,25 @@ static struct addrinfo get_hints(int mode) {
   return rv;
 }
 
-const static struct in_addr IPv4_LOCALHOST = { 0x7f000001 };
-const static struct in6_addr IPv6_LOCALHOST = { { {
-  0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x01,
-} } };
-
 static bool is_localhost(const struct addrinfo *ai) {
+  const struct in_addr IPv4_LOCALHOSTS[] = {
+    { htonl(0x7f000001) }, { htonl(0x7f000101) },
+  };
+
   switch (ai->ai_family) {
-    case AF_INET:
-      return memcmp(ai->ai_addr, &IPv4_LOCALHOST, sizeof(IPv4_LOCALHOST)) == 0;
-    case AF_INET6:
-      return memcmp(ai->ai_addr, &IPv6_LOCALHOST, sizeof(IPv6_LOCALHOST)) == 0;
+    case AF_INET: {
+      struct sockaddr_in *ipv4_a = (struct sockaddr_in *)ai->ai_addr;
+      for (size_t i = 0; i != arraysize(IPv4_LOCALHOSTS); ++i)
+        if (memcmp(&ipv4_a->sin_addr, &IPv4_LOCALHOSTS[i],
+                   sizeof(IPv4_LOCALHOSTS[i])) == 0)
+          return true;
+      return false;
+    }
+    case AF_INET6: {
+      struct sockaddr_in6 *ipv6_a = (struct sockaddr_in6 *)ai->ai_addr;
+      return memcmp(&ipv6_a->sin6_addr, &in6addr_loopback,
+                    sizeof(in6addr_loopback)) == 0;
+    }
     default:
       return false;
   }
