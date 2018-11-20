@@ -80,20 +80,21 @@ static struct addrinfo get_hints(int mode) {
 }
 
 const static struct in_addr IPv4_LOCALHOST = { 0x7f000001 };
-const static struct in6_addr IPv6_LOCALHOST = { {
+const static struct in6_addr IPv6_LOCALHOST = { { {
   0x00, 0x00, 0x00, 0x00,
   0x00, 0x00, 0x00, 0x00,
   0x00, 0x00, 0x00, 0x00,
   0x00, 0x00, 0x00, 0x01,
-} };
+} } };
 
 static bool is_localhost(const struct addrinfo *ai) {
-  switch (ai->family) {
+  switch (ai->ai_family) {
     case AF_INET:
-      return memcmp(ai->ai_addr, IPv4_LOCALHOST, sizeof(IPv4_LOCALHOST)) == 0;
+      return memcmp(ai->ai_addr, &IPv4_LOCALHOST, sizeof(IPv4_LOCALHOST)) == 0;
     case AF_INET6:
-      return memcmp(ai->ai_addr, IPv6_LOCALHOST, sizeof(IPv6_LOCALHOST)) == 0;
-    return false;
+      return memcmp(ai->ai_addr, &IPv6_LOCALHOST, sizeof(IPv6_LOCALHOST)) == 0;
+    default:
+      return false;
   }
 }
 
