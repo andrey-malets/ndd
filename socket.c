@@ -79,6 +79,24 @@ static struct addrinfo get_hints(int mode) {
   return rv;
 }
 
+const static struct in_addr IPv4_LOCALHOST = { 0x7f000001 };
+const static struct in6_addr IPv6_LOCALHOST = { {
+  0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x01,
+} };
+
+static bool is_localhost(const struct addrinfo *ai) {
+  switch (ai->family) {
+    case AF_INET:
+      return memcmp(ai->ai_addr, IPv4_LOCALHOST, sizeof(IPv4_LOCALHOST)) == 0;
+    case AF_INET6:
+      return memcmp(ai->ai_addr, IPv6_LOCALHOST, sizeof(IPv6_LOCALHOST)) == 0;
+    return false;
+  }
+}
+
 static bool init(void *data, size_t block_size) {
   GET(struct data, this, data);
 
@@ -94,6 +112,9 @@ static bool init(void *data, size_t block_size) {
         return false);
 
   for (struct addrinfo *i = result; i != NULL; i = i->ai_next) {
+    if (is_localhost(i))
+      continue;
+
     CHECK_OR_WARN(
         (this->sock = socket(i->ai_family, i->ai_socktype, i->ai_protocol)),
         "socket()", ;);
