@@ -47,7 +47,8 @@ bool dump_stats(struct state *state, const char *filename) {
 
 cleanup:
   if (output)
-    CHECK(fclose(output) == 0, PERROR1("fclose() failed for", filename), ;);
+    CHECK(fclose(output) == 0, PERROR1("fclose() failed for", filename),
+          rv = false);
 
   return rv;
 }
