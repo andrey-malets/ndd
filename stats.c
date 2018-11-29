@@ -42,6 +42,7 @@ bool dump_stats(struct state *state, const char *filename) {
 
   PUT("}\n");
 
+#undef DUMP_SIMPLE_VALUE
 #undef DUMP_VALUE
 #undef PUT
 
