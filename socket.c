@@ -278,16 +278,30 @@ static struct data *construct(const char *spec, int mode) {
     data->client_sock = -1;
 
     data->mode = mode;
-    char *colon = strchr(spec, ':');
+
+    const char *bracket = strchr(spec, ']');
+    if (spec[0] == '[' && bracket) {
+      spec++;
+    }
+
+    const char *colon = bracket ? strrchr(bracket, ':') : strchr(spec, ':');
+    int shift;
+    if (bracket) {
+      shift = bracket - spec;
+    } else if (colon) {
+      shift = colon - spec;
+    } else {
+      shift = strlen(spec);
+    }
+    strncpy(data->host, spec, shift);
+
     if (colon) {
-      strncpy(data->host, spec, colon - spec);
       if (strlen(spec) > strlen(data->host) + 1 + PORT_MAX_CHARS) {
         fputs("port too long", stderr);
         goto cleanup;
       }
       strncpy(data->port, colon+1, PORT_MAX_CHARS+1);
     } else {
-      strcpy(data->host, spec);
       strcpy(data->port, DEFAULT_PORT);
     }
   }
