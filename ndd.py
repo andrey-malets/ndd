@@ -3,7 +3,9 @@
 import argparse
 import contextlib
 import fcntl
+import logging
 import os
+import socket
 import subprocess
 import sys
 
@@ -33,6 +35,8 @@ def add_common_options(parser):
                         help='specify that input is a directory')
     parser.add_argument('-z', '--compress', action='store_true',
                         help='enable compression with pigz')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='enable verbose logging')
 
 
 def add_master_options(parser):
@@ -76,62 +80,99 @@ def get_slave_parser():
     return parser
 
 
-def get_slave_cmd(
-        args, input_=None, output=None, receive=None, send=None, lock=True):
+def get_local_source_args(args):
+    sargs = argparse.Namespace(**vars(args))
+    sargs.output = None
+    sargs.send = sargs.source
+    return sargs
+
+
+def get_slave_cmd(args, input_=None, output=None, receive=None, send=None):
     cmd = [sys.executable, os.path.abspath(__file__),
            '--slave', '--ndd', args.ndd, '--port', args.port]
     put_non_required_options(args, cmd)
 
-    def add_opt(cmd, arg, optname, as_value=False):
-        if arg:
-            cmd += [optname, arg] if as_value else [optname]
+    def add_opt(cmd, name, value, with_value=True):
+        if value:
+            cmd += ([name, value] if with_value else [name])
 
-    add_opt(cmd, args.recursive, '--recursive')
-    add_opt(cmd, args.compress, '--compress')
+    add_opt(cmd, '--verbose', args.verbose, with_value=False)
 
-    add_opt(cmd, input_, '--input', as_value=True)
-    add_opt(cmd, output, '--output', as_value=True)
-    add_opt(cmd, receive, '--receive', as_value=True)
-    add_opt(cmd, send, '--send', as_value=True)
-    if lock:
-        add_opt(cmd, args.lock_input, '--lock-input', as_value=True)
-        add_opt(cmd, args.lock_output, '--lock-output', as_value=True)
+    add_opt(cmd, '--recursive', args.recursive, with_value=False)
+    add_opt(cmd, '--compress', args.compress, with_value=False)
+
+    add_opt(cmd, '--input', input_)
+    add_opt(cmd, '--output', output)
+
+    add_opt(cmd, '--receive', receive)
+    add_opt(cmd, '--send', send)
+
+    add_opt(cmd, '--lock-input', args.lock_input)
+    add_opt(cmd, '--lock-output', args.lock_output)
+
     return cmd
 
 
-def init_process(cmd, read_fd=None, write_fd=None):
-    if read_fd or write_fd:
-        stdin = os.fdopen(read_fd) if read_fd else None
-        stdout = os.fdopen(write_fd, 'w') if write_fd else None
-        process = subprocess.Popen(cmd, stdin=stdin, stdout=stdout,
-                                   close_fds=True)
-    else:
-        process = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-        process.stdin.close()
-    return process
+def get_host(source):
+    return source[source.find('@')+1:]
 
 
-def wait(procs):
-    proc_map = {proc.pid: proc for proc in procs}
+def ssh(host, args):
+    return ['ssh', '-tt', '-o', 'PasswordAuthentication=no'] + args + [host]
 
-    def kill():
-        for proc in list(proc_map.values()):
-            if proc.poll() is None:
-                try:
-                    proc.terminate()
-                    proc.wait()
-                except Exception:
-                    pass
 
-    for _ in proc_map:
-        (pid, status) = os.wait()
-        assert pid in proc_map
-        proc = proc_map[pid]
-        assert proc.wait() is not None
-        if status != 0 or proc.returncode != 0:
-            kill()
-            return 1
-    return 0
+def get_remote_source_cmd(args):
+    return (
+        ssh(args.source, args.X) +
+        get_slave_cmd(args, input_=args.input, send=get_host(args.source))
+    )
+
+
+def get_remote_destination_cmd(args, i):
+    receive = get_host(
+        args.source if i == 0 else args.destination[i - 1]
+    )
+    send = (
+        get_host(args.destination[i]) if i != len(args.destination) - 1
+        else None
+    )
+    return (
+        ssh(args.destination[i], args.X) +
+        get_slave_cmd(args, output=args.output, receive=receive, send=send)
+    )
+
+
+class ProcessWatcher:
+
+    def __init__(self):
+        self._processes = set()
+
+    def init_process(self, cmd, read_fd=None, write_fd=None):
+        if read_fd or write_fd:
+            stdin = os.fdopen(read_fd) if read_fd else None
+            stdout = os.fdopen(write_fd, 'w') if write_fd else None
+            process = subprocess.Popen(cmd, stdin=stdin, stdout=stdout)
+        else:
+            process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
+
+        self._processes.add(process.pid)
+        return process
+
+    def wait(self):
+        while self._processes:
+            (pid, status) = os.wait()
+            logging.debug('Proceess %i exited with status %i', pid, status)
+            assert pid in self._processes
+            code = os.waitstatus_to_exitcode(status)
+            if code < 0:
+                raise RuntimeError(
+                    f'Process {pid} was terminated by signal {-code}'
+                )
+            elif code > 0:
+                raise RuntimeError(
+                    f'Process {pid} exited with non-zero exit code {code}'
+                )
+            self._processes.remove(pid)
 
 
 @contextlib.contextmanager
@@ -169,86 +210,113 @@ def locked_on_slave(args):
         yield
 
 
-def start_source_tar(args, procs):
+def handle_process(proc, name, rv=None):
+    try:
+        yield rv
+    except BaseException:
+        logging.warning('Killing %s', name)
+        proc.kill()
+        raise
+    finally:
+        try:
+            logging.info('Waiting for %s to stop', name)
+            proc.wait()
+        except BaseException:
+            logging.exception('Failed to cleanup %s', name)
+
+
+@contextlib.contextmanager
+def source_tar(args, watcher):
     read_fd, write_fd = os.pipe()
-    procs.append(init_process(['tar', '-C', args.input, '-f', '-', '-c', '.'],
-                              write_fd=write_fd))
-    return read_fd
+    cmdline = ['tar', '-C', args.input, '-f', '-', '-c', '.']
+    logging.info('Starting source tar: %s', cmdline)
+    proc = watcher.init_process(cmdline, write_fd=write_fd)
+    yield from handle_process(proc, 'source tar', read_fd)
 
 
-def start_source_compressor(input_fd, procs):
+@contextlib.contextmanager
+def source_compressor(input_fd, watcher):
     read_fd, write_fd = os.pipe()
-    procs.append(init_process(['pigz', '--fast'], read_fd=input_fd,
-                              write_fd=write_fd))
-    return read_fd
+    cmdline = ['pigz', '--fast']
+    logging.info('Starting source compressor: %s', cmdline)
+    proc = watcher.init_process(cmdline, read_fd=input_fd, write_fd=write_fd)
+    yield from handle_process(proc, 'source compressor', read_fd)
 
 
-def start_source_pack(args, procs):
-    if args.recursive:
-        read_fd = start_source_tar(args, procs)
-    else:
-        read_fd = os.open(args.input, os.O_RDONLY)
-    if args.compress:
-        read_fd = start_source_compressor(read_fd, procs)
-    return read_fd
+@contextlib.contextmanager
+def prepared_source(args, watcher):
+    with contextlib.ExitStack() as stack:
+        read_fd = (
+            stack.enter_context(source_tar(args, watcher)) if args.recursive
+            else os.open(args.input, os.O_RDONLY)
+        )
+        if args.compress:
+            read_fd = stack.enter_context(source_compressor(read_fd, watcher))
+        yield read_fd
 
 
-def get_source_input_args(ndd_input):
-    return ['-i', ndd_input] if ndd_input else ['-I', '/dev/stdin']
-
-
-def get_source_ndd_cmd(args, read_fd=None):
+def get_source_ndd_cmd(args, read_fd):
     assert args.send, 'must have destination to send on source'
     cmd = [args.ndd]
-    cmd += get_source_input_args(None if read_fd else args.input)
+    cmd += (
+        ['-I', '/dev/stdin'] if read_fd is not None
+        else ['-i', args.input]
+    )
     cmd += ['-s', '{}:{}'.format(args.send, args.port)]
     put_non_required_options(args, cmd)
     return cmd
 
 
-def run_source(args):
-    procs = []
-    read_fd = (
-        start_source_pack(args, procs)
-        if args.recursive or args.compress else None
-    )
-    procs.append(init_process(
-        get_source_ndd_cmd(args, read_fd), read_fd=read_fd))
-    return wait(procs)
+@contextlib.contextmanager
+def local_source(args, watcher):
+    with contextlib.ExitStack() as stack:
+        read_fd = stack.enter_context(prepared_source(args, watcher))
+        cmd = get_source_ndd_cmd(args, read_fd)
+        logging.info('Starting source ndd: %s', cmd)
+        proc = watcher.init_process(cmd, read_fd=read_fd)
+        yield from handle_process(proc, 'source ndd')
 
 
-def start_destination_tar(args, procs):
+@contextlib.contextmanager
+def destination_tar(args, watcher):
     read_fd, write_fd = os.pipe()
-    procs.append(init_process(['tar', '-C', args.output, '-x', '-f', '-'],
-                              read_fd=read_fd))
-    return write_fd
+    cmdline = ['tar', '-C', args.output, '-x', '-f', '-']
+    logging.info('Starting destination tar: %s', cmdline)
+    proc = watcher.init_process(cmdline, read_fd=read_fd)
+    yield from handle_process(proc, 'destination tar', write_fd)
 
 
-def start_destination_decompressor(output_fd, procs):
+@contextlib.contextmanager
+def destination_decompressor(output_fd, watcher):
     read_fd, write_fd = os.pipe()
-    procs.append(init_process(['pigz', '-d'], read_fd=read_fd,
-                              write_fd=output_fd))
-    return write_fd
+    cmdline = ['pigz', '-d']
+    logging.info('Starting destination decompressor: %s', cmdline)
+    proc = watcher.init_process(cmdline, read_fd=read_fd, write_fd=output_fd)
+    yield from handle_process(proc, 'destination decompressor', write_fd)
 
 
-def start_destination_unpack(args, procs):
-    if args.recursive:
-        write_fd = start_destination_tar(args, procs)
-    else:
-        write_fd = os.open(args.output, os.O_CREAT | os.O_WRONLY)
-    if args.compress:
-        write_fd = start_destination_decompressor(write_fd, procs)
-    return write_fd
+@contextlib.contextmanager
+def prepared_destination(args, watcher):
+    with contextlib.ExitStack() as stack:
+        write_fd = (
+            stack.enter_context(destination_tar(args, watcher))
+            if args.recursive
+            else os.open(args.output, os.O_CREAT | os.O_WRONLY)
+        )
+        if args.compress:
+            write_fd = stack.enter_context(
+                destination_decompressor(write_fd, watcher)
+            )
+        yield write_fd
 
 
-def get_destination_output_args(ndd_output):
-    return ['-o', ndd_output] if ndd_output else ['-O', '/dev/stdout']
-
-
-def get_destination_ndd_cmd(args, write_fd=None):
+def get_destination_ndd_cmd(args, write_fd):
     assert args.receive, 'must have source to receive on destination'
     cmd = [args.ndd]
-    cmd += get_destination_output_args(None if write_fd else args.output)
+    cmd += (
+        ['-O', '/dev/stdout'] if write_fd is not None
+        else ['-o', args.output]
+    )
     cmd += ['-r', '{}:{}'.format(args.receive, args.port)]
     if args.send:
         cmd += ['-s', '{}:{}'.format(args.send, args.port)]
@@ -256,60 +324,77 @@ def get_destination_ndd_cmd(args, write_fd=None):
     return cmd
 
 
-def run_destination(args):
-    procs = []
-    write_fd = (
-        start_destination_unpack(args, procs)
-        if args.recursive or args.compress else None
+@contextlib.contextmanager
+def local_destination(args, watcher):
+    with contextlib.ExitStack() as stack:
+        write_fd = stack.enter_context(prepared_destination(args, watcher))
+        cmd = get_destination_ndd_cmd(args, write_fd)
+        logging.info('Starting destination ndd: %s', cmd)
+        proc = watcher.init_process(cmd, write_fd=write_fd)
+        yield from handle_process(proc, 'destination ndd')
+
+
+@contextlib.contextmanager
+def remote_source(args, watcher):
+    cmd = get_remote_source_cmd(args)
+    logging.info('Running remote source: %s', cmd)
+    yield from handle_process(watcher.init_process(cmd), 'remote source')
+
+
+@contextlib.contextmanager
+def remote_destination(args, i, watcher):
+    cmd = get_remote_destination_cmd(args, i)
+    logging.info('Running remote destination: %s', cmd)
+    dhost = get_host(args.destination[i])
+    yield from handle_process(watcher.init_process(cmd),
+                              f'remote destination {dhost}')
+
+
+def setup_logging(args):
+    logging.basicConfig(
+        level=logging.INFO if args.verbose else logging.WARNING,
+        format=f'%(asctime)s {socket.gethostname()}: %(levelname)-8s '
+               '%(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
     )
-    procs.append(init_process(get_destination_ndd_cmd(args, write_fd),
-                              write_fd=write_fd))
-    return wait(procs)
-
-
-def run_slave(args):
-    assert not(args.input and args.output) and \
-        (args.input or args.output), \
-        'exactly one of input and output is required'
-    with locked_on_slave(args):
-        return run_source(args) if args.input else run_destination(args)
-
-
-def get_host(source):
-    return source[source.find('@')+1:]
-
-
-def ssh(host, args):
-    return ['ssh', '-tt', '-o', 'PasswordAuthentication=no'] + args + [host]
-
-
-def run_master(args):
-    procs = []
-    source_cmd = get_slave_cmd(
-        args, input_=args.input, send=get_host(args.source),
-        lock=not args.local)
-    with locked_on_master(args):
-        procs.append(init_process(source_cmd if args.local
-                                  else ssh(args.source, args.X) + source_cmd))
-        for i, destination in enumerate(args.destination):
-            receive = get_host(
-                args.source if i == 0 else args.destination[i - 1]
-            )
-            send = (
-                get_host(args.destination[i]) if i != len(args.destination) - 1
-                else None
-            )
-            destination_cmd = ssh(destination, args.X) + get_slave_cmd(
-                args, output=args.output, receive=receive, send=send)
-            procs.append(init_process(destination_cmd))
-        return wait(procs)
 
 
 def main(raw_args):
-    if len(raw_args) > 0 and raw_args[0] == '--slave':
-        return run_slave(get_slave_parser().parse_args(raw_args[1:]))
-    else:
-        return run_master(get_master_parser().parse_args(raw_args))
+    slave = (len(raw_args) > 0 and raw_args[0] == '--slave')
+    args = (
+        get_slave_parser().parse_args(raw_args[1:]) if slave
+        else get_master_parser().parse_args(raw_args)
+    )
+
+    setup_logging(args)
+    watcher = ProcessWatcher()
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            (locked_on_slave if slave else locked_on_master)(args)
+        )
+        if slave:
+            assert (
+                args.input and not args.output or
+                args.output and not args.input
+            ), 'exactly one of input and output is required on slave'
+
+            stack.enter_context(
+                local_source(args, watcher) if args.input
+                else local_destination(args, watcher)
+            )
+        else:
+            stack.enter_context(
+                local_source(get_local_source_args(args), watcher)
+                if args.local
+                else remote_source(args, watcher)
+            )
+            for i in range(len(args.destination)):
+                stack.enter_context(remote_destination(args, i, watcher))
+        try:
+            watcher.wait()
+        except Exception:
+            logging.exception('Failed to wait for child processes')
+            return 1
 
 
 if __name__ == '__main__':
