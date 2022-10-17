@@ -124,6 +124,12 @@ static bool init(void *data, size_t block_size) {
     CHECK_OR_WARN(
         (this->sock = socket(i->ai_family, i->ai_socktype, i->ai_protocol)),
         "socket()", ;);
+    if (this->mode == S) {
+        int reuse = 1;
+        CHECK_OR_WARN(setsockopt(this->sock, SOL_SOCKET, SO_REUSEADDR,
+                                 &reuse, sizeof(reuse)),
+                      "setsockopt(SO_REUSEADDR)", goto end);
+    }
 
     if (this->sock == -1)
       continue;
@@ -133,15 +139,10 @@ static bool init(void *data, size_t block_size) {
       case R:
         rv = try_connect(this, i);
         break;
-      case S: {
-        int reuse = 1;
-        CHECK_OR_WARN(setsockopt(this->sock, SOL_SOCKET, SO_REUSEADDR,
-                                 &reuse, sizeof(reuse)),
-                      "setsockopt(SO_REUSEADDR)", goto end);
+      case S:
         CHECK_OR_WARN(rv = bind(this->sock, i->ai_addr, i->ai_addrlen),
                       "bind()", goto end);
         break;
-      }
       default:
         assert(0);
     }
