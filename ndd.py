@@ -248,7 +248,7 @@ def prepared_source(args, watcher):
     with contextlib.ExitStack() as stack:
         read_fd = (
             stack.enter_context(source_tar(args, watcher)) if args.recursive
-            else os.open(args.input, os.O_RDONLY)
+            else None
         )
         if args.compress:
             read_fd = stack.enter_context(source_compressor(read_fd, watcher))
@@ -301,7 +301,7 @@ def prepared_destination(args, watcher):
         write_fd = (
             stack.enter_context(destination_tar(args, watcher))
             if args.recursive
-            else os.open(args.output, os.O_CREAT | os.O_WRONLY)
+            else None
         )
         if args.compress:
             write_fd = stack.enter_context(
