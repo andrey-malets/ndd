@@ -235,11 +235,15 @@ def source_tar(args, watcher):
 
 
 @contextlib.contextmanager
-def source_compressor(input_fd, watcher):
+def source_compressor(args, input_fd, watcher):
     read_fd, write_fd = os.pipe()
     cmdline = ['pigz', '--fast']
+    in_fd = (
+        os.open(args.input, os.O_RDONLY) if input_fd is None
+        else input_fd
+    )
     logging.info('Starting source compressor: %s', cmdline)
-    proc = watcher.init_process(cmdline, read_fd=input_fd, write_fd=write_fd)
+    proc = watcher.init_process(cmdline, read_fd=in_fd, write_fd=write_fd)
     yield from handle_process(proc, 'source compressor', read_fd)
 
 
@@ -251,7 +255,9 @@ def prepared_source(args, watcher):
             else None
         )
         if args.compress:
-            read_fd = stack.enter_context(source_compressor(read_fd, watcher))
+            read_fd = stack.enter_context(
+                source_compressor(args, read_fd, watcher)
+            )
         yield read_fd
 
 
@@ -287,11 +293,15 @@ def destination_tar(args, watcher):
 
 
 @contextlib.contextmanager
-def destination_decompressor(output_fd, watcher):
+def destination_decompressor(args, output_fd, watcher):
     read_fd, write_fd = os.pipe()
     cmdline = ['pigz', '-d']
+    out_fd = (
+        os.open(args.output, os.O_WRONLY | os.O_CREAT) if output_fd is None
+        else output_fd
+    )
     logging.info('Starting destination decompressor: %s', cmdline)
-    proc = watcher.init_process(cmdline, read_fd=read_fd, write_fd=output_fd)
+    proc = watcher.init_process(cmdline, read_fd=read_fd, write_fd=out_fd)
     yield from handle_process(proc, 'destination decompressor', write_fd)
 
 
@@ -305,7 +315,7 @@ def prepared_destination(args, watcher):
         )
         if args.compress:
             write_fd = stack.enter_context(
-                destination_decompressor(write_fd, watcher)
+                destination_decompressor(args, write_fd, watcher)
             )
         yield write_fd
 
