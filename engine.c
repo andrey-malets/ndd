@@ -4,6 +4,7 @@
 #include "struct.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/epoll.h>
@@ -111,9 +112,10 @@ bool transfer(size_t buffer_size, size_t block_size,
     if (waiting) {
       INC(state->stats, waited_cycles);
       int num_events;
-      FAIL_IF_NOT(
-          SYSCALL(num_events = epoll_wait(epoll_fd, events, waiting, -1)),
-          perror("epoll_wait failed"));
+      num_events = epoll_wait(epoll_fd, events, waiting, -1);
+      if (num_events == -1 && errno == EINTR)
+        continue;
+      FAIL_IF_NOT(SYSCALL(num_events), perror("epoll_wait failed"));
       for (int i = 0; i != num_events; ++i) {
         struct entry *entry = events[i].data.ptr;
         assert(entry->busy);
