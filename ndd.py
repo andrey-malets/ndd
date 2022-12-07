@@ -2,12 +2,50 @@
 
 import argparse
 import contextlib
+import dataclasses
+import enum
 import fcntl
 import logging
 import os
 import socket
 import subprocess
 import sys
+from typing import Optional
+
+
+@dataclasses.dataclass
+class Process:
+    description: str
+    cmdline: list[str]
+    stdin: Optional[str] = dataclasses.field(default=None)
+    stdout: Optional[str] = dataclasses.field(default=None)
+
+
+@dataclasses.dataclass
+class ProcessRunData:
+    description: str
+    cmdline: str
+    stdin_fd: Optional[int] = dataclasses.field(default=None)
+    stdout_fd: Optional[int] = dataclasses.field(default=None)
+
+
+class PipeType(enum.Enum):
+    IN_OUT = 1
+    DEV_FD = 2
+
+
+@dataclasses.dataclass
+class Pipe:
+    src_id: str
+    src_type: PipeType
+    dst_id: str
+    dst_type: PipeType
+
+
+@dataclasses.dataclass
+class Pipeline:
+    processes: dict[str, Process] = dataclasses.field(default_factory=dict)
+    pipes: list[Pipe] = dataclasses.field(default_factory=list)
 
 
 def put_non_required_options(args, cmdline):
@@ -142,37 +180,147 @@ def get_remote_destination_cmd(args, i):
     )
 
 
-class ProcessWatcher:
+def get_source_ndd_cmd(args, read_fd):
+    assert args.send, 'must have destination to send on source'
+    cmd = [args.ndd]
+    cmd += (
+        ['-I', '/dev/stdin'] if read_fd is not None
+        else ['-i', args.input]
+    )
+    cmd += ['-s', '{}:{}'.format(args.send, args.port)]
+    put_non_required_options(args, cmd)
+    return cmd
 
-    def __init__(self):
-        self._processes = set()
 
-    def init_process(self, cmd, read_fd=None, write_fd=None):
-        if read_fd or write_fd:
-            stdin = os.fdopen(read_fd) if read_fd else None
-            stdout = os.fdopen(write_fd, 'w') if write_fd else None
-            process = subprocess.Popen(cmd, stdin=stdin, stdout=stdout)
-        else:
-            process = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
+def get_destination_ndd_cmd(args, write_fd):
+    assert args.receive, 'must have source to receive on destination'
+    cmd = [args.ndd]
+    cmd += (
+        ['-O', '/dev/stdout'] if write_fd is not None
+        else ['-o', args.output]
+    )
+    cmd += ['-r', '{}:{}'.format(args.receive, args.port)]
+    if args.send:
+        cmd += ['-s', '{}:{}'.format(args.send, args.port)]
+    put_non_required_options(args, cmd)
+    return cmd
 
-        self._processes.add(process.pid)
-        return process
 
-    def wait(self):
-        while self._processes:
-            (pid, status) = os.wait()
-            logging.debug('Proceess %i exited with status %i', pid, status)
-            assert pid in self._processes
-            code = os.waitstatus_to_exitcode(status)
-            if code < 0:
-                raise RuntimeError(
-                    f'Process {pid} was terminated by signal {-code}'
-                )
-            elif code > 0:
-                raise RuntimeError(
-                    f'Process {pid} exited with non-zero exit code {code}'
-                )
-            self._processes.remove(pid)
+def prepare_local_source(pipeline, args):
+    if args.recursive:
+        pipeline.processes['src_tar'] = Process(
+            'source tar', ['tar', '-C', args.input, '-f', '-', '-c', '.']
+        )
+    if args.compress:
+        pipeline.processes['src_pigz'] = Process(
+            'source compressor',
+            (
+                ['pigz', '--fast'] if args.recursive else
+                ['pigz', '--fast', '--stdout', args.input]
+            )
+        )
+
+    pipeline.processes['src_socat'] = Process(
+        'source socat',
+        ['socat', '-u', 'STDIN',
+         f'TCP4-LISTEN:{args.port},bind={args.send},reuseaddr'],
+        stdin=(
+            None if args.recursive or args.compress
+            else args.input
+        )
+    )
+
+    if args.recursive and args.compress:
+        pipes = [
+            Pipe('src_tar', PipeType.IN_OUT, 'src_pigz', PipeType.IN_OUT),
+            Pipe('src_pigz', PipeType.IN_OUT, 'src_socat', PipeType.IN_OUT),
+        ]
+    elif args.recursive:
+        pipes = [
+            Pipe('src_tar', PipeType.IN_OUT, 'src_socat', PipeType.IN_OUT),
+        ]
+    elif args.compress:
+        pipes = [
+            Pipe('src_pigz', PipeType.IN_OUT, 'src_socat', PipeType.IN_OUT),
+        ]
+    else:
+        pipes = []
+    pipeline.pipes.extend(pipes)
+
+
+def prepare_local_destination(pipeline, args):
+    pipeline.processes['dst_rcv_socat'] = Process(
+        'destination receiving socat',
+        ['socat', '-u', f'TCP4:{args.receive}:{args.port},retry=5', 'STDOUT'],
+        stdout=(
+            None if (args.recursive or args.compress or args.send)
+            else args.output
+        )
+    )
+    if args.recursive:
+        pipeline.processes['dst_tar'] = Process(
+            'destination tar', ['tar', '-C', args.output, '-x', '-f', '-']
+        )
+    if args.compress:
+        pipeline.processes['dst_pigz'] = Process(
+            'destination decompressor',
+            ['pigz', '-d'],
+            stdout=(None if args.recursive else args.output)
+        )
+    if args.send:
+        pipeline.processes['dst_tee'] = Process(
+            'destination tee',
+            (
+                ['tee'] if args.recursive or args.compress
+                else ['tee', args.output]
+            )
+        )
+        pipeline.processes['dst_snd_socat'] = Process(
+            'destination sending socat',
+            (
+                ['socat', '-u', 'STDIN',
+                 f'TCP4-LISTEN:{args.port},bind={args.send},reuseaddr']
+            )
+        )
+
+    pipes = []
+    if args.send:
+        pipes.extend([
+            Pipe('dst_rcv_socat', PipeType.IN_OUT, 'dst_tee', PipeType.IN_OUT),
+            Pipe('dst_tee', PipeType.IN_OUT, 'dst_snd_socat', PipeType.IN_OUT),
+        ])
+        if args.recursive and args.compress:
+            pipes.extend([
+                Pipe('dst_tee', PipeType.DEV_FD,
+                     'dst_pigz', PipeType.IN_OUT),
+                Pipe('dst_pigz', PipeType.IN_OUT, 'dst_tar', PipeType.IN_OUT),
+            ])
+        elif args.recursive:
+            pipes.append(
+                Pipe('dst_tee', PipeType.DEV_FD, 'dst_tar', PipeType.IN_OUT)
+            )
+        elif args.compress:
+            pipes.append(
+                Pipe('dst_tee', PipeType.DEV_FD, 'dst_pigz', PipeType.IN_OUT)
+            )
+    else:
+        if args.recursive and args.compress:
+            pipes.extend([
+                Pipe('dst_rcv_socat', PipeType.IN_OUT,
+                     'dst_pigz', PipeType.IN_OUT),
+                Pipe('dst_pigz', PipeType.IN_OUT, 'dst_tar', PipeType.IN_OUT),
+            ])
+        elif args.recursive:
+            pipes.append(
+                Pipe('dst_rcv_socat', PipeType.IN_OUT,
+                     'dst_tar', PipeType.IN_OUT)
+            )
+        elif args.compress:
+            pipes.append(
+                Pipe('dst_rcv_socat', PipeType.IN_OUT,
+                     'dst_pigz', PipeType.IN_OUT)
+            )
+    pipeline.pipes.extend(pipes)
 
 
 @contextlib.contextmanager
@@ -210,6 +358,39 @@ def locked_on_slave(args):
         yield
 
 
+class ProcessWatcher:
+
+    def __init__(self):
+        self._processes = set()
+
+    def init_process(self, cmd, read_fd=None, write_fd=None):
+        stdin = (read_fd if read_fd is not None else subprocess.DEVNULL)
+        process = subprocess.Popen(cmd, stdin=stdin, stdout=write_fd)
+        if read_fd is not None:
+            os.close(read_fd)
+        if write_fd is not None:
+            os.close(write_fd)
+        self._processes.add(process.pid)
+        return process
+
+    def wait(self):
+        while self._processes:
+            (pid, status) = os.wait()
+            logging.debug('Proceess %i exited with status %i', pid, status)
+            assert pid in self._processes
+            code = os.waitstatus_to_exitcode(status)
+            if code < 0:
+                raise RuntimeError(
+                    f'Process {pid} was terminated by signal {-code}'
+                )
+            elif code > 0:
+                raise RuntimeError(
+                    f'Process {pid} exited with non-zero exit code {code}'
+                )
+            self._processes.remove(pid)
+
+
+@contextlib.contextmanager
 def handle_process(proc, name, rv=None):
     try:
         yield rv
@@ -225,139 +406,74 @@ def handle_process(proc, name, rv=None):
             logging.exception('Failed to cleanup %s', name)
 
 
-@contextlib.contextmanager
-def source_tar(args, watcher):
-    read_fd, write_fd = os.pipe()
-    cmdline = ['tar', '-C', args.input, '-f', '-', '-c', '.']
-    logging.info('Starting source tar: %s', cmdline)
-    proc = watcher.init_process(cmdline, write_fd=write_fd)
-    yield from handle_process(proc, 'source tar', read_fd)
-
-
-@contextlib.contextmanager
-def source_compressor(args, input_fd, watcher):
-    read_fd, write_fd = os.pipe()
-    cmdline = ['pigz', '--fast']
-    in_fd = (
-        os.open(args.input, os.O_RDONLY) if input_fd is None
-        else input_fd
+def process(run_data, id_):
+    assert id_ in run_data, (
+        f'No process with id {id_} to connect via pipe'
     )
-    logging.info('Starting source compressor: %s', cmdline)
-    proc = watcher.init_process(cmdline, read_fd=in_fd, write_fd=write_fd)
-    yield from handle_process(proc, 'source compressor', read_fd)
+    return run_data[id_]
 
 
-@contextlib.contextmanager
-def prepared_source(args, watcher):
-    with contextlib.ExitStack() as stack:
-        read_fd = (
-            stack.enter_context(source_tar(args, watcher)) if args.recursive
-            else None
+def prepare_run_data(processes):
+    run_data = {}
+    for id_, proc in processes.items():
+        stdin_fd = None
+        if proc.stdin:
+            logging.info('Redirecting stdin for %s from %s',
+                         proc.description, proc.stdin)
+            stdin_fd = os.open(proc.stdin, os.O_RDONLY)
+        stdout_fd = None
+        if proc.stdout:
+            logging.info('Redirecting stdout for %s to %s',
+                         proc.description, proc.stdout)
+            stdout_fd = os.open(proc.stdout,
+                                os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
+        run_data[id_] = ProcessRunData(
+            description=proc.description,
+            cmdline=proc.cmdline,
+            stdin_fd=stdin_fd,
+            stdout_fd=stdout_fd
         )
-        if args.compress:
-            read_fd = stack.enter_context(
-                source_compressor(args, read_fd, watcher)
+    return run_data
+
+
+def prepare_pipes(run_data, pipes):
+    for pipe in pipes:
+        logging.info('Using pipe: %s', pipe)
+        src_proc = process(run_data, pipe.src_id)
+        dst_proc = process(run_data, pipe.dst_id)
+        read_fd, write_fd = os.pipe()
+        if pipe.src_type == PipeType.IN_OUT:
+            assert src_proc.stdout_fd is None
+            src_proc.stdout_fd = write_fd
+        elif pipe.src_type == PipeType.DEV_FD:
+            src_proc.cmdline.append(f'/dev/fd/{write_fd}')
+        else:
+            assert False, pipe.src_type
+
+        if pipe.dst_type == PipeType.IN_OUT:
+            assert dst_proc.stdin_fd is None
+            dst_proc.stdin_fd = read_fd
+        elif pipe.dst_type == PipeType.DEV_FD:
+            dst_proc.cmdline.append(f'/dev/fd/{read_fd}')
+        else:
+            assert False, pipe.dst_type
+
+
+def execute(watcher, pipeline):
+    with contextlib.ExitStack() as stack:
+        run_data = prepare_run_data(pipeline.processes)
+        prepare_pipes(run_data, pipeline.pipes)
+        for rd in run_data.values():
+            logging.info('Starting %s: %s', rd.description, rd.cmdline)
+            proc = watcher.init_process(
+                rd.cmdline, read_fd=rd.stdin_fd, write_fd=rd.stdout_fd
             )
-        yield read_fd
-
-
-def get_source_ndd_cmd(args, read_fd):
-    assert args.send, 'must have destination to send on source'
-    cmd = [args.ndd]
-    cmd += (
-        ['-I', '/dev/stdin'] if read_fd is not None
-        else ['-i', args.input]
-    )
-    cmd += ['-s', '{}:{}'.format(args.send, args.port)]
-    put_non_required_options(args, cmd)
-    return cmd
-
-
-@contextlib.contextmanager
-def local_source(args, watcher):
-    with contextlib.ExitStack() as stack:
-        read_fd = stack.enter_context(prepared_source(args, watcher))
-        cmd = get_source_ndd_cmd(args, read_fd)
-        logging.info('Starting source ndd: %s', cmd)
-        proc = watcher.init_process(cmd, read_fd=read_fd)
-        yield from handle_process(proc, 'source ndd')
-
-
-@contextlib.contextmanager
-def destination_tar(args, watcher):
-    read_fd, write_fd = os.pipe()
-    cmdline = ['tar', '-C', args.output, '-x', '-f', '-']
-    logging.info('Starting destination tar: %s', cmdline)
-    proc = watcher.init_process(cmdline, read_fd=read_fd)
-    yield from handle_process(proc, 'destination tar', write_fd)
-
-
-@contextlib.contextmanager
-def destination_decompressor(args, output_fd, watcher):
-    read_fd, write_fd = os.pipe()
-    cmdline = ['pigz', '-d']
-    out_fd = (
-        os.open(args.output, os.O_WRONLY | os.O_CREAT) if output_fd is None
-        else output_fd
-    )
-    logging.info('Starting destination decompressor: %s', cmdline)
-    proc = watcher.init_process(cmdline, read_fd=read_fd, write_fd=out_fd)
-    yield from handle_process(proc, 'destination decompressor', write_fd)
-
-
-@contextlib.contextmanager
-def prepared_destination(args, watcher):
-    with contextlib.ExitStack() as stack:
-        write_fd = (
-            stack.enter_context(destination_tar(args, watcher))
-            if args.recursive
-            else None
-        )
-        if args.compress:
-            write_fd = stack.enter_context(
-                destination_decompressor(args, write_fd, watcher)
-            )
-        yield write_fd
-
-
-def get_destination_ndd_cmd(args, write_fd):
-    assert args.receive, 'must have source to receive on destination'
-    cmd = [args.ndd]
-    cmd += (
-        ['-O', '/dev/stdout'] if write_fd is not None
-        else ['-o', args.output]
-    )
-    cmd += ['-r', '{}:{}'.format(args.receive, args.port)]
-    if args.send:
-        cmd += ['-s', '{}:{}'.format(args.send, args.port)]
-    put_non_required_options(args, cmd)
-    return cmd
-
-
-@contextlib.contextmanager
-def local_destination(args, watcher):
-    with contextlib.ExitStack() as stack:
-        write_fd = stack.enter_context(prepared_destination(args, watcher))
-        cmd = get_destination_ndd_cmd(args, write_fd)
-        logging.info('Starting destination ndd: %s', cmd)
-        proc = watcher.init_process(cmd, write_fd=write_fd)
-        yield from handle_process(proc, 'destination ndd')
-
-
-@contextlib.contextmanager
-def remote_source(args, watcher):
-    cmd = get_remote_source_cmd(args)
-    logging.info('Running remote source: %s', cmd)
-    yield from handle_process(watcher.init_process(cmd), 'remote source')
-
-
-@contextlib.contextmanager
-def remote_destination(args, i, watcher):
-    cmd = get_remote_destination_cmd(args, i)
-    logging.info('Running remote destination: %s', cmd)
-    dhost = get_host(args.destination[i])
-    yield from handle_process(watcher.init_process(cmd),
-                              f'remote destination {dhost}')
+            stack.enter_context(handle_process(proc, rd.description))
+        try:
+            watcher.wait()
+        except Exception:
+            logging.exception('Failed to wait for child processes')
+            return 1
 
 
 def setup_logging(args):
@@ -382,29 +498,35 @@ def main(raw_args):
         stack.enter_context(
             (locked_on_slave if slave else locked_on_master)(args)
         )
+        pipeline = Pipeline()
         if slave:
             assert (
                 args.input and not args.output or
                 args.output and not args.input
             ), 'exactly one of input and output is required on slave'
 
-            stack.enter_context(
-                local_source(args, watcher) if args.input
-                else local_destination(args, watcher)
-            )
+            if args.input:
+                prepare_local_source(pipeline, args)
+            else:
+                prepare_local_destination(pipeline, args)
         else:
-            stack.enter_context(
-                local_source(get_local_source_args(args), watcher)
-                if args.local
-                else remote_source(args, watcher)
-            )
-            for i in range(len(args.destination)):
-                stack.enter_context(remote_destination(args, i, watcher))
+            if args.local:
+                prepare_local_source(pipeline, get_local_source_args(args))
+            else:
+                pipeline.processes.append(
+                    Process('remote source', get_remote_source_cmd(args))
+                )
+
+            for i, dest in enumerate(args.destination):
+                pipeline.processes[f'dest_{get_host(dest)}'] = Process(
+                    f'remote destination for {get_host(dest)}',
+                    get_remote_destination_cmd(args, i)
+                )
         try:
-            watcher.wait()
+            return execute(watcher, pipeline)
         except Exception:
             logging.exception('Failed to wait for child processes')
-            return 1
+            return 2
 
 
 if __name__ == '__main__':
