@@ -7,6 +7,7 @@ import enum
 import fcntl
 import logging
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -156,7 +157,7 @@ def get_host(source):
 
 
 def ssh(host, args):
-    return ['ssh', '-tt', '-o', 'PasswordAuthentication=no'] + args + [host]
+    return ['ssh', '-o', 'PasswordAuthentication=no'] + args + [host]
 
 
 def get_remote_source_cmd(args):
@@ -358,57 +359,6 @@ def locked_on_slave(args):
         yield
 
 
-class ProcessWatcher:
-
-    def __init__(self):
-        self._processes = dict()
-
-    def init_process(self, cmd, read_fd=None, write_fd=None, description=None):
-        stdin = (read_fd if read_fd is not None else subprocess.DEVNULL)
-        process = subprocess.Popen(cmd, stdin=stdin, stdout=write_fd)
-        if read_fd is not None:
-            os.close(read_fd)
-        if write_fd is not None:
-            os.close(write_fd)
-        self._processes[process.pid] = (description or 'no description')
-        return process
-
-    def wait(self):
-        while self._processes:
-            (pid, status) = os.wait()
-            logging.debug('Proceess %i exited with status %i', pid, status)
-            assert pid in self._processes
-            description = self._processes.pop(pid)
-            code = os.waitstatus_to_exitcode(status)
-            if code < 0:
-                raise RuntimeError(
-                    f'Process {pid} ({description}) was terminated '
-                    f'by signal {-code}'
-                )
-            elif code > 0:
-                raise RuntimeError(
-                    f'Process {pid} ({description}) exited with '
-                    f'non-zero exit code {code}'
-                )
-            self._processes.remove(pid)
-
-
-@contextlib.contextmanager
-def handle_process(proc, name, rv=None):
-    try:
-        yield rv
-    except BaseException:
-        logging.warning('Killing %s', name)
-        proc.kill()
-        raise
-    finally:
-        try:
-            logging.info('Waiting for %s to stop', name)
-            proc.wait()
-        except BaseException:
-            logging.exception('Failed to cleanup %s', name)
-
-
 def process(run_data, id_):
     assert id_ in run_data, (
         f'No process with id {id_} to connect via pipe'
@@ -462,22 +412,75 @@ def prepare_pipes(run_data, pipes):
             assert False, pipe.dst_type
 
 
-def execute(watcher, pipeline):
-    with contextlib.ExitStack() as stack:
-        run_data = prepare_run_data(pipeline.processes)
-        prepare_pipes(run_data, pipeline.pipes)
-        for rd in run_data.values():
-            logging.info('Starting %s: %s', rd.description, rd.cmdline)
-            proc = watcher.init_process(
-                rd.cmdline, read_fd=rd.stdin_fd, write_fd=rd.stdout_fd,
-                description=rd.description
-            )
-            stack.enter_context(handle_process(proc, rd.description))
+def start_process(cmd, read_fd=None, write_fd=None):
+    stdin = (read_fd if read_fd is not None else subprocess.DEVNULL)
+    process = subprocess.Popen(cmd, stdin=stdin, stdout=write_fd)
+    if read_fd is not None:
+        os.close(read_fd)
+    if write_fd is not None:
+        os.close(write_fd)
+    return process
+
+
+def handle_process_status(description, pid, status):
+    logging.debug('%s (pid %d) exited with status %i',
+                  description, pid, status)
+    code = os.waitstatus_to_exitcode(status)
+    if code < 0:
+        logging.error('%s (pid %s) was terminated by signal %d (%s)',
+                      description, pid, -code, signal.strsignal(-code))
+    elif code > 0:
+        logging.error('%s (pid %s) exited with non-zero exit code %d',
+                      description, pid, code)
+    else:
+        logging.info('%s (pid %s) exited normally', description, pid)
+
+    return code == 0
+
+
+def wait_processes(proc_map):
+    seen_failures = False
+    while not seen_failures and proc_map:
         try:
-            watcher.wait()
-        except Exception:
-            logging.exception('Failed to wait for child processes')
-            return 1
+            (pid, status) = os.wait()
+        except ChildProcessError:
+            break
+        assert pid in proc_map
+        seen_failures = (
+            seen_failures or
+            not handle_process_status(proc_map.pop(pid), pid, status)
+        )
+
+    for pid in list(proc_map.keys()):
+        description = proc_map.pop(pid)
+        (waited_pid, status) = os.waitpid(pid, os.WNOHANG)
+        still_running = (waited_pid == 0)
+        if seen_failures and still_running:
+            logging.warning('Killing %s (pid %s) with SIGTERM',
+                            description, pid)
+            os.kill(pid, signal.SIGTERM)
+            (waited_pid, status) = os.waitpid(pid, 0)
+        assert waited_pid == pid
+        seen_failures = (
+            seen_failures or
+            not handle_process_status(description, pid, status)
+        )
+
+    return not seen_failures
+
+
+def execute(pipeline):
+    proc_map = dict()
+    run_data = prepare_run_data(pipeline.processes)
+    prepare_pipes(run_data, pipeline.pipes)
+    for rd in run_data.values():
+        logging.info('Starting %s: %s', rd.description, rd.cmdline)
+        proc = start_process(
+            rd.cmdline, read_fd=rd.stdin_fd, write_fd=rd.stdout_fd,
+        )
+        proc_map[proc.pid] = rd.description
+
+    return wait_processes(proc_map)
 
 
 def setup_logging(args):
@@ -497,7 +500,6 @@ def main(raw_args):
     )
 
     setup_logging(args)
-    watcher = ProcessWatcher()
     with contextlib.ExitStack() as stack:
         stack.enter_context(
             (locked_on_slave if slave else locked_on_master)(args)
@@ -527,7 +529,7 @@ def main(raw_args):
                     get_remote_destination_cmd(args, i)
                 )
         try:
-            return execute(watcher, pipeline)
+            return 0 if execute(pipeline) else 1
         except Exception:
             logging.exception('Failed to wait for child processes')
             return 2
