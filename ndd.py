@@ -28,6 +28,7 @@ class ProcessRunData:
     cmdline: str
     stdin_fd: Optional[int] = dataclasses.field(default=None)
     stdout_fd: Optional[int] = dataclasses.field(default=None)
+    pass_fds: list[int] = dataclasses.field(default_factory=list)
 
 
 class PipeType(enum.Enum):
@@ -157,7 +158,7 @@ def get_host(source):
 
 
 def ssh(host, args):
-    return ['ssh', '-o', 'PasswordAuthentication=no'] + args + [host]
+    return ['ssh', '-tt', '-o', 'PasswordAuthentication=no'] + args + [host]
 
 
 def get_remote_source_cmd(args):
@@ -395,11 +396,14 @@ def prepare_pipes(run_data, pipes):
         src_proc = process(run_data, pipe.src_id)
         dst_proc = process(run_data, pipe.dst_id)
         read_fd, write_fd = os.pipe()
+        logging.info('Allocated pipe: read_fd=%d, write_fd=%d',
+                     read_fd, write_fd)
         if pipe.src_type == PipeType.IN_OUT:
             assert src_proc.stdout_fd is None
             src_proc.stdout_fd = write_fd
         elif pipe.src_type == PipeType.DEV_FD:
             src_proc.cmdline.append(f'/dev/fd/{write_fd}')
+            src_proc.pass_fds.append(write_fd)
         else:
             assert False, pipe.src_type
 
@@ -408,17 +412,24 @@ def prepare_pipes(run_data, pipes):
             dst_proc.stdin_fd = read_fd
         elif pipe.dst_type == PipeType.DEV_FD:
             dst_proc.cmdline.append(f'/dev/fd/{read_fd}')
+            dst_proc.pass_fds.append(read_fd)
         else:
             assert False, pipe.dst_type
 
 
-def start_process(cmd, read_fd=None, write_fd=None):
-    stdin = (read_fd if read_fd is not None else subprocess.DEVNULL)
-    process = subprocess.Popen(cmd, stdin=stdin, stdout=write_fd)
-    if read_fd is not None:
-        os.close(read_fd)
-    if write_fd is not None:
-        os.close(write_fd)
+def start_process(rd):
+    logging.info('Starting %s: %s, stdin_fd=%s, stdout_fd=%s, pass_fds=%s',
+                 rd.description, rd.cmdline, rd.stdin_fd, rd.stdout_fd,
+                 rd.pass_fds)
+    stdin = (rd.stdin_fd if rd.stdin_fd is not None else subprocess.DEVNULL)
+    process = subprocess.Popen(rd.cmdline, stdin=stdin, stdout=rd.stdout_fd,
+                               pass_fds=rd.pass_fds)
+    if rd.stdin_fd is not None:
+        os.close(rd.stdin_fd)
+    if rd.stdout_fd is not None:
+        os.close(rd.stdout_fd)
+    for fd in rd.pass_fds:
+        os.close(fd)
     return process
 
 
@@ -470,15 +481,12 @@ def wait_processes(proc_map):
 
 
 def execute(pipeline):
-    proc_map = dict()
     run_data = prepare_run_data(pipeline.processes)
     prepare_pipes(run_data, pipeline.pipes)
-    for rd in run_data.values():
-        logging.info('Starting %s: %s', rd.description, rd.cmdline)
-        proc = start_process(
-            rd.cmdline, read_fd=rd.stdin_fd, write_fd=rd.stdout_fd,
-        )
-        proc_map[proc.pid] = rd.description
+    proc_map = {
+        start_process(rd).pid: rd.description
+        for rd in run_data.values()
+    }
 
     return wait_processes(proc_map)
 
