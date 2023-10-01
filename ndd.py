@@ -361,16 +361,16 @@ def locked_on_slave(args):
 class ProcessWatcher:
 
     def __init__(self):
-        self._processes = set()
+        self._processes = dict()
 
-    def init_process(self, cmd, read_fd=None, write_fd=None):
+    def init_process(self, cmd, read_fd=None, write_fd=None, description=None):
         stdin = (read_fd if read_fd is not None else subprocess.DEVNULL)
         process = subprocess.Popen(cmd, stdin=stdin, stdout=write_fd)
         if read_fd is not None:
             os.close(read_fd)
         if write_fd is not None:
             os.close(write_fd)
-        self._processes.add(process.pid)
+        self._processes[process.pid] = (description or 'no description')
         return process
 
     def wait(self):
@@ -378,14 +378,17 @@ class ProcessWatcher:
             (pid, status) = os.wait()
             logging.debug('Proceess %i exited with status %i', pid, status)
             assert pid in self._processes
+            description = self._processes.pop(pid)
             code = os.waitstatus_to_exitcode(status)
             if code < 0:
                 raise RuntimeError(
-                    f'Process {pid} was terminated by signal {-code}'
+                    f'Process {pid} ({description}) was terminated '
+                    f'by signal {-code}'
                 )
             elif code > 0:
                 raise RuntimeError(
-                    f'Process {pid} exited with non-zero exit code {code}'
+                    f'Process {pid} ({description}) exited with '
+                    f'non-zero exit code {code}'
                 )
             self._processes.remove(pid)
 
@@ -466,7 +469,8 @@ def execute(watcher, pipeline):
         for rd in run_data.values():
             logging.info('Starting %s: %s', rd.description, rd.cmdline)
             proc = watcher.init_process(
-                rd.cmdline, read_fd=rd.stdin_fd, write_fd=rd.stdout_fd
+                rd.cmdline, read_fd=rd.stdin_fd, write_fd=rd.stdout_fd,
+                description=rd.description
             )
             stack.enter_context(handle_process(proc, rd.description))
         try:
