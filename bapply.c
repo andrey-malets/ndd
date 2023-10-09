@@ -44,7 +44,7 @@ int main(int ac, char *av[]) {
     }
 
     ++total_blocks;
-    if (strncmp(new_block, old_block, nread)) {
+    if (memcmp(new_block, old_block, nread)) {
       ++different_blocks;
       if (lseek(ofd, -oread, SEEK_CUR) == -1) {
         fprintf(stderr, "Failed seek -%zu bytes in %s: %s\n",
