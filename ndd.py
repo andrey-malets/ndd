@@ -75,6 +75,8 @@ def add_common_options(parser):
                         help='specify that input is a directory')
     parser.add_argument('-z', '--compress', action='store_true',
                         help='enable compression with pigz')
+    parser.add_argument('-P', '--patch', action='store_true',
+                        help='write only blocks that are different in output')
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='enable verbose logging')
 
@@ -140,6 +142,7 @@ def get_slave_cmd(args, input_=None, output=None, receive=None, send=None):
 
     add_opt(cmd, '--recursive', args.recursive, with_value=False)
     add_opt(cmd, '--compress', args.compress, with_value=False)
+    add_opt(cmd, '--patch', args.patch, with_value=False)
 
     add_opt(cmd, '--input', input_)
     add_opt(cmd, '--output', output)
@@ -255,7 +258,8 @@ def prepare_local_destination(pipeline, args):
         'destination receiving socat',
         ['socat', '-u', f'TCP4:{args.receive}:{args.port},retry=5', 'STDOUT'],
         stdout=(
-            None if (args.recursive or args.compress or args.send)
+            None if (args.recursive or args.compress or args.patch or
+                     args.send)
             else args.output
         )
     )
@@ -263,17 +267,21 @@ def prepare_local_destination(pipeline, args):
         pipeline.processes['dst_tar'] = Process(
             'destination tar', ['tar', '-C', args.output, '-x', '-f', '-']
         )
+    elif args.patch:
+        pipeline.processes['dst_bapply'] = Process(
+            'destination bapply', ['bapply', args.output]
+        )
     if args.compress:
         pipeline.processes['dst_pigz'] = Process(
             'destination decompressor',
             ['pigz', '-d'],
-            stdout=(None if args.recursive else args.output)
+            stdout=(None if (args.recursive or args.patch) else args.output)
         )
     if args.send:
         pipeline.processes['dst_tee'] = Process(
             'destination tee',
             (
-                ['tee'] if args.recursive or args.compress
+                ['tee'] if (args.recursive or args.compress or args.patch)
                 else ['tee', args.output]
             )
         )
@@ -305,6 +313,15 @@ def prepare_local_destination(pipeline, args):
             pipes.append(
                 Pipe('dst_tee', PipeType.DEV_FD, 'dst_pigz', PipeType.IN_OUT)
             )
+            if args.patch:
+                pipes.append(
+                    Pipe('dst_pigz', PipeType.IN_OUT,
+                         'dst_bapply', PipeType.IN_OUT)
+                )
+        elif args.patch:
+            pipes.append(
+                Pipe('dst_tee', PipeType.IN_OUT, 'dst_bapply', PipeType.IN_OUT)
+            )
     else:
         if args.recursive and args.compress:
             pipes.extend([
@@ -322,6 +339,17 @@ def prepare_local_destination(pipeline, args):
                 Pipe('dst_rcv_socat', PipeType.IN_OUT,
                      'dst_pigz', PipeType.IN_OUT)
             )
+            if args.patch:
+                pipes.append(
+                    Pipe('dst_pigz', PipeType.IN_OUT,
+                         'dst_bapply', PipeType.IN_OUT)
+                )
+        elif args.patch:
+            pipes.append(
+                Pipe('dst_rcv_socat', PipeType.IN_OUT,
+                     'dst_bapply', PipeType.IN_OUT)
+            )
+
     pipeline.pipes.extend(pipes)
 
 
@@ -524,6 +552,9 @@ def main(raw_args):
             else:
                 prepare_local_destination(pipeline, args)
         else:
+            assert not (args.recursive and args.patch), (
+                '--recursive and --patch cannot be used at the same time'
+            )
             if args.local:
                 prepare_local_source(pipeline, get_local_source_args(args))
             else:
